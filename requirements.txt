@@ -1,0 +1,47 @@
+# Smart Helmet – Python dependencies (fully offline after first install)
+#
+# Install all dependencies:
+#   pip install -r requirements.txt
+#
+# On Raspberry Pi, RPi.GPIO is installed automatically via the linux marker.
+# On the manager laptop (Windows), RPi.GPIO is skipped.
+
+# ── Offline Speech-to-Text ────────────────────────────────────────────────────
+# OpenAI Whisper via CTranslate2 runtime – runs on CPU, no GPU needed.
+# Downloads Whisper model automatically on first use (~75 MB for "tiny").
+faster-whisper>=1.0.0
+
+# ── Offline Translation Engine ────────────────────────────────────────────────
+# CTranslate2: same efficient runtime used by faster-whisper.
+# Already installed as a faster-whisper dependency – listed explicitly for clarity.
+ctranslate2>=4.0.0
+
+# ── Translation Tokeniser ─────────────────────────────────────────────────────
+# SentencePiece: tokeniser for Helsinki OPUS-MT translation models.
+sentencepiece>=0.2.0
+
+# ── Model Download Helper ─────────────────────────────────────────────────────
+# Downloads Helsinki OPUS-MT models from HuggingFace once, then fully offline.
+huggingface-hub>=0.21.0
+
+# ── Offline Text-to-Speech ────────────────────────────────────────────────────
+# Uses Windows SAPI on laptop, espeak-ng on Pi/Linux – no model download needed.
+# Pi setup: sudo apt-get install -y espeak-ng espeak-ng-data
+pyttsx3>=2.90
+
+# ── Audio I/O ──────────────────────────────────────────────────────────────────
+# PyAudio requires PortAudio C library.
+#   Windows:  pip install pyaudio  (pre-built wheels available on most versions)
+#   Pi/Linux: sudo apt-get install -y portaudio19-dev python3-pyaudio
+pyaudio>=0.2.14
+
+# ── GPIO (Raspberry Pi only) ───────────────────────────────────────────────────
+RPi.GPIO>=0.7.1; sys_platform == "linux"
+
+# ── Keyboard simulation (manager laptop fallback) ──────────────────────────────
+# Allows SPACE / r / h keys to simulate GPIO buttons on the laptop.
+# Note: on Windows, run as Administrator for global key capture to work.
+keyboard>=0.13.5
+
+# ── Reminder scheduler ────────────────────────────────────────────────────────
+schedule>=1.2.2
