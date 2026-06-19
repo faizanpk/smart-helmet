@@ -28,7 +28,11 @@
 #   translation_pipeline(audio_bytes)  – full send-side pipeline
 
 import os
+import json
+import math
+import io
 import platform
+import struct
 import subprocess
 import tempfile
 import threading
@@ -74,13 +78,11 @@ def setup_offline_models() -> None:
 
 
 def _ensure_translation_models() -> None:
-    """Download OPUS-MT CTranslate2 models if not already cached locally."""
+    """Download OPUS-MT CTranslate2 models (en↔de) if not already cached."""
     from huggingface_hub import snapshot_download
 
-    pairs = [
-        (config.HELMET_LANGUAGE_SHORT, config.TARGET_LANGUAGE_SHORT),
-        (config.TARGET_LANGUAGE_SHORT, config.HELMET_LANGUAGE_SHORT),
-    ]
+    # Always download both directions regardless of current helmet language
+    pairs = [("en", "de"), ("de", "en")]
     for from_code, to_code in pairs:
         model_id = _OPUS_MODEL_IDS.get((from_code, to_code))
         if model_id is None:
@@ -96,7 +98,7 @@ def _ensure_translation_models() -> None:
             repo_id=model_id,
             local_dir=local_dir,
             ignore_patterns=["*.msgpack", "*.h5", "flax_model*", "tf_model*",
-                             "pytorch_model*", "*.bin"],   # skip non-CT2 weights
+                             "pytorch_model*", "*.bin"],
         )
         log.info("[TRANSLATE] Cached %s→%s to %s", from_code, to_code, local_dir)
 
@@ -305,6 +307,37 @@ def voice_to_text(audio_bytes: bytes, language_code: str = None) -> str:
             pass
 
 
+def transcribe_only(audio_bytes: bytes) -> tuple:
+    """
+    Run Whisper STT only (no translation).
+    Returns (text: str, detected_language: str).
+    detected_language is Whisper's auto-detected short code, e.g. 'en' or 'de'.
+    Returns ('', '') on failure or silence.
+    """
+    if not audio_bytes or len(audio_bytes) < config.CHUNK * 2:
+        return "", ""
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        tmp_wav = f.name
+    try:
+        _pcm_to_wav(audio_bytes, tmp_wav)
+        model = _get_whisper()
+        # No language hint – let Whisper auto-detect language
+        segments, info = model.transcribe(tmp_wav, beam_size=3, vad_filter=True)
+        text = " ".join(seg.text.strip() for seg in segments).strip()
+        detected = (info.language or "").lower()
+        if text:
+            log.info("[STT] '%s' (auto-detected lang: %s)", text, detected)
+        else:
+            log.warning("[STT] No speech detected.")
+        return text, detected
+    finally:
+        try:
+            os.unlink(tmp_wav)
+        except OSError:
+            pass
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # TEXT-TO-SPEECH  (pyttsx3, fully offline)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -398,6 +431,117 @@ def play_audio_bytes(wav_bytes: bytes) -> None:
             os.unlink(tmp_path)
         except OSError:
             pass
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# LANGUAGE SETTINGS  (voice configuration + persistence)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def load_language_setting() -> str:
+    """
+    Load the saved language preference from data/settings.json.
+    Returns "en" or "de". Falls back to config.HELMET_LANGUAGE if not saved.
+    """
+    try:
+        if os.path.isfile(config.SETTINGS_PATH):
+            with open(config.SETTINGS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            lang = data.get("helmet_language", "")
+            if lang in ("en", "de"):
+                log.info("[LANG] Loaded saved language: '%s'", lang)
+                return lang
+    except Exception as exc:
+        log.warning("[LANG] Could not read settings.json: %s", exc)
+    return config.HELMET_LANGUAGE
+
+
+def save_language_setting(lang: str) -> None:
+    """Persist language preference to data/settings.json."""
+    os.makedirs(config.DATA_DIR, exist_ok=True)
+    try:
+        with open(config.SETTINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump({"helmet_language": lang}, f)
+        log.info("[LANG] Saved language preference: '%s'", lang)
+    except Exception as exc:
+        log.error("[LANG] Could not save settings.json: %s", exc)
+
+
+def apply_language_setting(lang: str) -> None:
+    """
+    Update all config module variables to match the chosen language.
+    lang is "en" or "de".
+    Call this at startup (after load_language_setting) and after voice config.
+    """
+    config.HELMET_LANGUAGE = lang
+    if lang == "en":
+        config.HELMET_LANGUAGE_CODE  = "en-US"
+        config.HELMET_LANGUAGE_SHORT = "en"
+        config.TARGET_LANGUAGE_CODE  = "de-DE"
+        config.TARGET_LANGUAGE_SHORT = "de"
+    else:  # "de"
+        config.HELMET_LANGUAGE_CODE  = "de-DE"
+        config.HELMET_LANGUAGE_SHORT = "de"
+        config.TARGET_LANGUAGE_CODE  = "en-US"
+        config.TARGET_LANGUAGE_SHORT = "en"
+    log.info("[LANG] Applied: HELMET=%s  TARGET=%s",
+             config.HELMET_LANGUAGE_CODE, config.TARGET_LANGUAGE_CODE)
+
+
+def parse_config_command(text: str) -> str:
+    """
+    Parse a voice language configuration command.
+    Returns "en", "de", or "" (not recognised).
+
+    Recognised phrases (case-insensitive):
+      EN: "english", "englisch", "in english", "auf englisch"
+      DE: "german",  "deutsch",  "in german",  "auf deutsch"
+    """
+    t = text.lower()
+    en_keywords = ("english", "englisch", "in english", "auf englisch")
+    de_keywords = ("german",  "deutsch",  "in german",  "auf deutsch")
+    for kw in en_keywords:
+        if kw in t:
+            return "en"
+    for kw in de_keywords:
+        if kw in t:
+            return "de"
+    return ""
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ALERT BEEP  (pure-Python WAV tone, no external library needed)
+# ──────────────────────────────────────────────────────────────────────────────
+
+_beep_wav_cache: bytes = b""   # generated once, reused
+
+
+def _generate_beep_wav(freq: int = 880, duration: float = 0.15,
+                       sample_rate: int = 8000) -> bytes:
+    """Generate a single short sine-wave beep as WAV bytes."""
+    n_samples = int(sample_rate * duration)
+    raw = b"".join(
+        struct.pack("<h", int(28000 * math.sin(2 * math.pi * freq * i / sample_rate)))
+        for i in range(n_samples)
+    )
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(raw)
+    return buf.getvalue()
+
+
+def play_alert_beep(count: int = 3) -> None:
+    """
+    Play N short beeps through the speaker to alert the user.
+    Beep WAV is generated once and cached for speed.
+    """
+    global _beep_wav_cache
+    if not _beep_wav_cache:
+        _beep_wav_cache = _generate_beep_wav()
+    for _ in range(count):
+        play_audio_bytes(_beep_wav_cache)
 
 
 def speak(text: str, language_code: str = None) -> None:

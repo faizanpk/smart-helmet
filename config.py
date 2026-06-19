@@ -1,70 +1,117 @@
 # config.py – Smart Helmet Communication Module
-# Adjust HELMET_ROLE, HELMET_LANGUAGE_*, TARGET_LANGUAGE_*, and PARTNER_IP
-# before deploying each helmet.
+#
+# Edit the values in each section before deploying a helmet.
+# Three device types:
+#   "manager" → Laptop 1 – TCP server, selects target worker with 1/2/3 keys
+#   "worker"  → Pi or Laptop 2 – TCP client, two PTT channels (manager + peer)
 
 import os
 
 # ─── Helmet Identity ──────────────────────────────────────────────────────────
-# "manager" → runs on laptop, acts as TCP server, uses keyboard simulation
-# "worker"  → runs on Raspberry Pi, acts as TCP client, uses GPIO buttons
+# HELMET_ID must be unique across all helmets in the same session.
+#   manager   → "manager"
+#   worker 1  → "w-01"   (Pi)
+#   worker 2  → "w-02"   (Laptop 2)
 HELMET_ROLE = "worker"
-HELMET_ID   = "helmet-01"
+HELMET_ID   = "w-01"
 
 # ─── Language Configuration ───────────────────────────────────────────────────
-# HELMET_LANGUAGE_*  = language THIS helmet's user speaks
-# TARGET_LANGUAGE_*  = language the PARTNER helmet's user speaks
+# HELMET_LANGUAGE = the language THIS user speaks and wants to hear.
+#   "en"  →  English speaker / listener
+#   "de"  →  German speaker / listener
+#
+# This is the PRIMARY setting. All BCP-47 codes below are derived from it.
+# You can also change this at runtime via voice command (long-hold PLAY button).
+# The setting is saved to data/settings.json and loaded on next boot.
+#
+HELMET_LANGUAGE = "en"   # "en" or "de"
 
-# BCP-47 codes used by faster-whisper STT and pyttsx3 TTS
-HELMET_LANGUAGE_CODE  = "en-US"   # STT / TTS language for this helmet
-TARGET_LANGUAGE_CODE  = "de-DE"   # TTS language for audio sent to partner
+# BCP-47 codes (derived in main.py from HELMET_LANGUAGE via apply_language_setting)
+# Set manually here only if you are NOT using the voice configuration feature.
+HELMET_LANGUAGE_CODE  = "en-US"   # used for STT language hint and local TTS
+HELMET_LANGUAGE_SHORT = "en"      # ISO-639-1, used by OPUS-MT
 
-# Short ISO-639-1 codes for argostranslate
-HELMET_LANGUAGE_SHORT = "en"      # translate FROM
-TARGET_LANGUAGE_SHORT = "de"      # translate TO
+TARGET_LANGUAGE_CODE  = "de-DE"   # opposite language BCP-47
+TARGET_LANGUAGE_SHORT = "de"      # opposite language ISO-639-1
 
 # ─── Offline STT Model ────────────────────────────────────────────────────────
-# faster-whisper model size: "tiny" (75 MB, fast, good for Pi)
-#                            "base" (145 MB, better accuracy, good for laptop)
-#                            "small" (465 MB, best quality, needs >1 GB RAM)
-WHISPER_MODEL_SIZE = "tiny"   # change to "base" on manager laptop if desired
+# "tiny"  – 75 MB,  fast, recommended for Pi
+# "base"  – 145 MB, better accuracy, recommended for laptop
+WHISPER_MODEL_SIZE = "tiny"
 
-# ─── Network ──────────────────────────────────────────────────────────────────
-# Manager laptop IP – worker Pi must point to this address.
-# Manager sets MY_IP via PARTNER_IP on the worker config.
-PARTNER_IP = "192.168.1.102"      # ← set to manager laptop's LAN IP
-COMM_PORT  = 5005                 # TCP port for all inter-helmet communication
-LIVE_CALL_PORT = 5006             # UDP port for live call audio streaming
+# ─── Network – Manager ────────────────────────────────────────────────────────
+MANAGER_IP = "192.168.1.100"      # ← Laptop 1 (manager) LAN IP
+COMM_PORT  = 5005                 # TCP port: worker ↔ manager
 
-# ─── GPIO Pin Numbers (BCM numbering) ────────────────────────────────────────
-BTN_SPEAK      = 17   # Push-to-talk translation
-BTN_REMINDER   = 27   # Record / trigger reminder
-BTN_HANDOVER   = 22   # Record or playback shift handover
-SWITCH_SPEAKER = 23   # Toggle switch: speaker mode (ON = helmet removed)
+# Legacy alias kept for live_call.py
+PARTNER_IP = MANAGER_IP
+
+# ─── Network – Peer (worker-to-worker direct) ─────────────────────────────────
+PEER_WORKER_IP = "192.168.1.101"  # ← IP of the other worker helmet
+PEER_PORT      = 5007             # TCP port: worker ↔ worker
+
+# ─── Live Call ────────────────────────────────────────────────────────────────
+LIVE_CALL_PORT = 5006             # UDP port for full-duplex intercom
+
+# ─── GPIO Pin Numbers (BCM numbering, Raspberry Pi) ─────────────────────────────────────
+BTN_SPEAK_MANAGER = 17   # Hold → PTT to manager           (Pin 11)
+BTN_SPEAK_WORKER  = 24   # Hold → PTT to peer worker       (Pin 18)
+BTN_REMINDER      = 27   # Hold → record reminder          (Pin 13)
+BTN_HANDOVER      = 22   # Press → play/record handover    (Pin 15)
+BTN_PLAY_MSG      = 25   # Short → play message            (Pin 22)
+BTN_CALL_MANAGER  = 23   # Press → call/answer/end manager (Pin 16)  ← push button
+LED_MSG_PIN       = 5    # Output → message alert LED      (Pin 29)
+
+# Manager-only: one call button per worker (keyboard keys F1/F2)
+# Workers do not need these – they only call the manager.
+BTN_CALL_W01 = None   # F1 key on manager laptop  (w-01 = Pi)
+BTN_CALL_W02 = None   # F2 key on manager laptop  (w-02 = Laptop 2)
+
+# Legacy alias
+BTN_SPEAK = BTN_SPEAK_MANAGER
+
+# Port offset for LiveCall UDP: 0 = w-01, 2 = w-02
+# Keeps manager↔w-01 on ports 5006/5007 and manager↔w-02 on 5008/5009
+CALL_PORT_OFFSETS = {
+    "w-01": 0,
+    "w-02": 2,
+}
+
+# ─── Laptop Keyboard Simulation ───────────────────────────────────────────────────────────
+# Manager (Laptop 1):
+#   SPACE    → BTN_SPEAK_MANAGER   (send PTT to selected worker)
+#   1/2/3    → select target worker for PTT
+#   p        → BTN_PLAY_MSG
+#   F1       → BTN_CALL_W01        (call/answer/end Worker A)
+#   F2       → BTN_CALL_W02        (call/answer/end Worker B)
+#   r        → BTN_REMINDER
+#   h        → BTN_HANDOVER
+#   Hold SPACE during call → mute
+#
+# Worker (Laptop 2):
+#   SPACE    → BTN_SPEAK_MANAGER   (send PTT to manager)
+#   w        → BTN_SPEAK_WORKER    (send PTT to peer worker)
+#   p        → BTN_PLAY_MSG
+#   c        → BTN_CALL_MANAGER    (call/answer/end manager)
+#   r        → BTN_REMINDER
+#   h        → BTN_HANDOVER
 
 # ─── Audio Recording ──────────────────────────────────────────────────────────
-SAMPLE_RATE        = 16000   # Hz  (Google STT requires 8k or 16k)
-CHANNELS           = 1       # Mono
-CHUNK              = 1024    # Frames per buffer
-RECORD_SECONDS_MAX = 60      # Hard cap on hold-to-talk duration (seconds)
+SAMPLE_RATE        = 16000
+CHANNELS           = 1
+CHUNK              = 1024
+RECORD_SECONDS_MAX = 60
 
 # ALSA device identifiers on Raspberry Pi
-# Find correct values with:  arecord -l   (mic)   aplay -l   (speaker)
-# Typically the I2S mic/amp appear as card 1 when onboard audio is card 0.
-ALSA_MIC_DEVICE = "plughw:1,0"   # SPH0645LM4H  – I2S microphone
-ALSA_SPK_DEVICE = "plughw:1,0"   # MAX98357A     – I2S amplifier
+ALSA_MIC_DEVICE = "plughw:1,0"
+ALSA_SPK_DEVICE = "plughw:1,0"
 
-# ─── Volume ───────────────────────────────────────────────────────────────────
-VOLUME_NORMAL  = 80    # % – normal helmet-on volume
-VOLUME_SPEAKER = 100   # % – speaker mode volume (helmet removed)
+# ─── Volume ──────────────────────────────────────────────────────────────────────────────
+VOLUME_NORMAL  = 80
+VOLUME_SPEAKER = 100
 
 # ─── Data Storage ─────────────────────────────────────────────────────────────
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data")
-DB_PATH  = os.path.join(DATA_DIR, "helmet.db")
-
-# ─── Laptop Keyboard Simulation (manager / development) ──────────────────────
-# When not on a Pi, these keyboard keys simulate GPIO button presses:
-#   SPACE  → BTN_SPEAK
-#   r      → BTN_REMINDER
-#   h      → BTN_HANDOVER
-# Toggle-switch simulation is not available on laptop (always OFF).
+BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR      = os.path.join(BASE_DIR, "data")
+DB_PATH       = os.path.join(DATA_DIR, "helmet.db")
+SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")

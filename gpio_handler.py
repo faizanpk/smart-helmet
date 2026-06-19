@@ -1,12 +1,24 @@
-# gpio_handler.py – GPIO button and toggle-switch management.
+# gpio_handler.py – GPIO button and LED management.
 #
 # On Raspberry Pi  → uses RPi.GPIO (BCM mode, active-LOW buttons with pull-ups)
-# On manager laptop → uses the `keyboard` library to simulate buttons:
-#       SPACE  = BTN_SPEAK   (hold to talk / hold to mute during live call)
-#       r      = BTN_REMINDER
-#       h      = BTN_HANDOVER
-#       l      = SWITCH_SPEAKER toggle (press once to start live call,
-#                                       press again to end it)
+# On laptop (manager or worker) → uses the `keyboard` library to simulate GPIO:
+#
+# Manager (Laptop 1):
+#   SPACE → BTN_SPEAK_MANAGER    (hold to send PTT to selected worker)
+#   F1    → BTN_CALL_W01         (call/answer/end Worker A)
+#   F2    → BTN_CALL_W02         (call/answer/end Worker B)
+#   p     → BTN_PLAY_MSG         (short press = play, hold 3 s = language config)
+#   r     → BTN_REMINDER
+#   h     → BTN_HANDOVER
+#   1/2/3 → worker PTT selection (handled in main.py)
+#
+# Worker (Laptop 2):
+#   SPACE → BTN_SPEAK_MANAGER    (hold to send PTT to manager)
+#   w     → BTN_SPEAK_WORKER     (hold to send PTT to peer worker)
+#   c     → BTN_CALL_MANAGER     (call/answer/end manager)
+#   p     → BTN_PLAY_MSG
+#   r     → BTN_REMINDER
+#   h     → BTN_HANDOVER
 
 import threading
 import time
@@ -25,7 +37,7 @@ try:
     IS_PI = True
     log.info("[GPIO] Raspberry Pi detected – using RPi.GPIO")
 except (ImportError, RuntimeError):
-    log.info("[GPIO] Not on Pi – keyboard fallback active (SPACE / r / h)")
+    log.info("[GPIO] Not on Pi – keyboard fallback active")
 
 HAS_KEYBOARD = False
 _kb = None
@@ -36,39 +48,43 @@ if not IS_PI:
     except ImportError:
         log.warning("[GPIO] 'keyboard' package not found – run:  pip install keyboard")
 
-# Map GPIO pin → keyboard key
+# ─── Pin → key mapping ────────────────────────────────────────────────────────
+# BTN_CALL_W01 and BTN_CALL_W02 are None (manager-only, handled via keyboard hooks
+# in main.py directly).  All physical Pi buttons are in this map.
 _KEY_MAP = {
-    config.BTN_SPEAK:      "space",
-    config.BTN_REMINDER:   "r",
-    config.BTN_HANDOVER:   "h",
+    config.BTN_SPEAK_MANAGER: "space",
+    config.BTN_SPEAK_WORKER:  "w",
+    config.BTN_REMINDER:      "r",
+    config.BTN_HANDOVER:      "h",
+    config.BTN_PLAY_MSG:      "p",
+    config.BTN_CALL_MANAGER:  "c",   # worker: call/answer/end manager
 }
-
-# Simulated toggle switch state (toggled by pressing 'l' on the laptop)
-_switch_state = False
-
-def _on_l_key(event):
-    """Toggle the simulated switch state each time 'l' is pressed."""
-    global _switch_state
-    if event.event_type == "down":
-        _switch_state = not _switch_state
-        log.info("[GPIO] Simulated toggle switch: %s", "ON" if _switch_state else "OFF")
 
 
 # ─── Initialisation ───────────────────────────────────────────────────────────
 
-def setup_gpio():
-    """Initialise all button pins with internal pull-ups (active LOW)."""
+def setup_gpio() -> None:
+    """Initialise all button pins (inputs w/ pull-ups) and LED pin (output)."""
     if IS_PI:
-        for pin in (config.BTN_SPEAK, config.BTN_REMINDER,
-                    config.BTN_HANDOVER, config.SWITCH_SPEAKER):
+        # Input buttons – active LOW
+        for pin in (config.BTN_SPEAK_MANAGER, config.BTN_SPEAK_WORKER,
+                    config.BTN_REMINDER, config.BTN_HANDOVER,
+                    config.BTN_PLAY_MSG, config.BTN_CALL_MANAGER):
             GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        log.info("[GPIO] Pins configured: SPEAK=%d REMINDER=%d HANDOVER=%d SWITCH=%d",
-                 config.BTN_SPEAK, config.BTN_REMINDER,
-                 config.BTN_HANDOVER, config.SWITCH_SPEAKER)
+        # LED output
+        GPIO.setup(config.LED_MSG_PIN, GPIO.OUT, initial=GPIO.LOW)
+        log.info(
+            "[GPIO] Pins: SPEAK_MGR=%d SPEAK_WKR=%d REMINDER=%d HANDOVER=%d "
+            "PLAY=%d CALL_MGR=%d LED=%d",
+            config.BTN_SPEAK_MANAGER, config.BTN_SPEAK_WORKER,
+            config.BTN_REMINDER, config.BTN_HANDOVER,
+            config.BTN_PLAY_MSG, config.BTN_CALL_MANAGER, config.LED_MSG_PIN,
+        )
     else:
-        if HAS_KEYBOARD:
-            _kb.hook_key("l", _on_l_key)
-        log.info("[GPIO] Keyboard simulation ready – SPACE=SPEAK  r=REMINDER  h=HANDOVER  l=TOGGLE")
+        log.info(
+            "[GPIO] Keyboard sim: SPACE=PTT-manager  w=PTT-worker  "
+            "c=call-manager  p=play  r=reminder  h=handover"
+        )
 
 
 # ─── Button state ─────────────────────────────────────────────────────────────
@@ -133,22 +149,9 @@ def wait_for_release(pin: int, max_seconds: float = 60.0) -> float:
     return time.time() - start
 
 
-# ─── Toggle switch ────────────────────────────────────────────────────────────
-
-def get_switch_state(pin: int) -> bool:
-    """
-    Return True if the toggle switch is ON.
-    The 3-pin ON-OFF-ON switch is wired so ON pulls the pin HIGH.
-    On laptop: press 'l' to toggle between ON and OFF.
-    """
-    if IS_PI:
-        return GPIO.input(pin) == GPIO.HIGH
-    return _switch_state
-
-
 # ─── Cleanup ──────────────────────────────────────────────────────────────────
 
-def cleanup():
+def cleanup() -> None:
     """Release GPIO resources on shutdown."""
     if IS_PI:
         GPIO.cleanup()

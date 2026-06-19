@@ -51,14 +51,18 @@ def run_test(n, title, fn):
 
 def test_imports():
     modules = {
-        "config":        "config",
-        "db":            "db",
-        "gpio_handler":  "gpio_handler",
-        "network":       "network",
-        "translation":   "translation",
-        "reminders":     "reminders",
-        "handover":      "handover",
-        "speaker_mode":  "speaker_mode",
+        "config":         "config",
+        "db":             "db",
+        "gpio_handler":   "gpio_handler",
+        "network":        "network",
+        "peer_network":   "peer_network",
+        "message_store":  "message_store",
+        "led_handler":    "led_handler",
+        "call_manager":   "call_manager",
+        "translation":    "translation",
+        "reminders":      "reminders",
+        "handover":       "handover",
+        "speaker_mode":   "speaker_mode",
     }
     all_ok = True
     for name, mod in modules.items():

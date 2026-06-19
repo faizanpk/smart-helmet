@@ -1,19 +1,22 @@
 # live_call.py – Full-duplex live audio call (intercom mode).
 #
-# Activated when the toggle switch (SWITCH_SPEAKER) is flipped ON.
-# Streams raw PCM audio between manager and worker over UDP.
+# Activated by CallManager when a call is accepted.
+# Streams raw PCM audio between manager and one worker over UDP.
 #
 # Design:
-#   - Two threads per side: one sender (mic -> UDP), one receiver (UDP -> speaker)
-#   - No STT / translation / TTS – raw audio only, same language
+#   - Two threads per side: one sender (mic → UDP), one receiver (UDP → speaker)
+#   - No STT / translation / TTS – raw audio only
 #   - Packet format: 4-byte sequence number + raw PCM frames (~20 ms per packet)
-#   - BTN_SPEAK held during a call = MUTE (stops sending mic audio)
+#   - BTN_SPEAK_MANAGER held during a call = MUTE (stops sending mic audio)
 #   - Jitter buffer: receiver keeps a small queue to smooth out network variation
 #
-# Roles:
-#   manager → sends from port LIVE_CALL_PORT, receives on LIVE_CALL_PORT+1
-#   worker  → sends from port LIVE_CALL_PORT+1, receives on LIVE_CALL_PORT
-#   (mirror arrangement so both can send and receive simultaneously)
+# Port assignment (avoids collision when manager calls two workers):
+#   manager ↔ w-01 : manager sends on 5006, receives on 5007
+#                     worker  sends on 5007, receives on 5006
+#   manager ↔ w-02 : manager sends on 5008, receives on 5009
+#                     worker  sends on 5009, receives on 5008
+#
+# LIVE_CALL_PORT is the BASE port; call_manager passes the correct offset.
 
 import socket
 import struct
@@ -40,48 +43,68 @@ class LiveCall:
     """
     Full-duplex UDP audio streaming between two helmets.
 
-    Usage:
-        call = LiveCall(partner_ip)
-        call.start()        # enter call mode
-        call.mute(True)     # mute mic (BTN_SPEAK held)
-        call.mute(False)    # unmute
-        call.stop()         # exit call mode
+    Usage (via CallManager):
+        call = LiveCall()          # create once
+        call.start(partner_ip, port_offset)   # start for this call session
+        call.mute(True)            # mute mic
+        call.mute(False)           # unmute
+        call.stop()                # end call
+
+    port_offset: 0 for w-01, 2 for w-02 (so ports don't overlap)
     """
 
-    def __init__(self, partner_ip: str):
-        self._partner_ip = partner_ip
+    def __init__(self):
+        self._partner_ip: str = ""
+        self._send_port:  int = 0
+        self._recv_port:  int = 0
         self._active     = False
         self._muted      = False
         self._lock       = threading.Lock()
-
-        # Port assignment: manager and worker use opposite send/recv ports
-        # so their packets never collide.
-        if config.HELMET_ROLE == "manager":
-            self._send_port = config.LIVE_CALL_PORT          # manager sends on 5006
-            self._recv_port = config.LIVE_CALL_PORT + 1      # manager receives on 5007
-        else:
-            self._send_port = config.LIVE_CALL_PORT + 1      # worker sends on 5007
-            self._recv_port = config.LIVE_CALL_PORT          # worker receives on 5006
-
-        self._recv_queue: queue.Queue[bytes] = queue.Queue(maxsize=_JITTER_QUEUE_SIZE * 2)
+        self._recv_queue: queue.Queue = queue.Queue(maxsize=_JITTER_QUEUE_SIZE * 2)
         self._seq = 0
 
-    # ─── Public interface ──────────────────────────────────────────────────────
+    # ─── Public interface ───────────────────────────────────────────────────────────────────────
 
-    def start(self) -> None:
-        """Begin the live call: start sender and receiver threads."""
+    def start(self, partner_ip: str, port_offset: int = 0) -> None:
+        """
+        Begin the live call: configure ports and start audio threads.
+
+        partner_ip  : IP address of the remote helmet
+        port_offset : 0 for w-01 / manager↔w-01,
+                      2 for w-02 / manager↔w-02
+                      (keeps port pairs from overlapping)
+        """
         with self._lock:
             if self._active:
                 return
-            self._active = True
-            self._seq    = 0
+            self._partner_ip = partner_ip
+            self._active     = True
+            self._seq        = 0
 
-        log.info("[CALL] Live call started (send port %d, recv port %d).",
-                 self._send_port, self._recv_port)
+        # Port assignment based on role:
+        #   manager sends on BASE+offset, receives on BASE+offset+1
+        #   worker  sends on BASE+offset+1, receives on BASE+offset
+        base = config.LIVE_CALL_PORT + port_offset
+        if config.HELMET_ROLE == "manager":
+            self._send_port = base
+            self._recv_port = base + 1
+        else:
+            self._send_port = base + 1
+            self._recv_port = base
 
-        threading.Thread(target=self._sender_thread,   name="call-send",  daemon=True).start()
-        threading.Thread(target=self._receiver_thread, name="call-recv",  daemon=True).start()
-        threading.Thread(target=self._player_thread,   name="call-play",  daemon=True).start()
+        # Reset jitter queue for new call
+        while not self._recv_queue.empty():
+            try:
+                self._recv_queue.get_nowait()
+            except Exception:
+                break
+
+        log.info("[CALL] Starting: %s  send=%d  recv=%d",
+                 partner_ip, self._send_port, self._recv_port)
+
+        threading.Thread(target=self._sender_thread,   name="call-send", daemon=True).start()
+        threading.Thread(target=self._receiver_thread, name="call-recv", daemon=True).start()
+        threading.Thread(target=self._player_thread,   name="call-play", daemon=True).start()
 
     def stop(self) -> None:
         """End the live call: stop all threads."""

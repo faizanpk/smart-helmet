@@ -1,529 +1,378 @@
-# Smart Helmet Communication System
-## Complete User Guide
+# Smart Helmet — User Guide
+
+## Table of Contents
+1. [System Overview](#1-system-overview)
+2. [Hardware Components](#2-hardware-components)
+3. [Wiring Guide](#3-wiring-guide)
+4. [Software Setup](#4-software-setup)
+5. [Configuration](#5-configuration)
+6. [Controls Reference](#6-controls-reference)
+7. [How to Use — Step by Step](#7-how-to-use--step-by-step)
+8. [Testing Before First Use](#8-testing-before-first-use)
 
 ---
 
-## What This System Does
+## 1. System Overview
 
-| Feature | How to trigger |
-|---------|---------------|
-| **Push-to-Talk Translation** | Hold button, speak EN, release → partner hears DE (and vice versa) |
-| **Task Reminders** | Hold button, say "Inspect crane at 14:30" → plays audio at that time |
-| **Shift Handover** | Press button → records/plays handover message for next shift |
-| **Live Call** | Flip toggle switch ON → full two-way intercom in real time |
-| **Speaker Mode** | Flip toggle switch ON → volume jumps when helmet is removed |
+Three helmet types, one Wi-Fi network:
+
+```
+ ┌──────────────────────────────────────────────────────────┐
+ │              Wi-Fi / Local Network (LAN)                  │
+ │                                                           │
+ │   Manager (Laptop 1)  ──port 5005──  Worker 1 (Pi)       │
+ │         │                                 │               │
+ │         │             ─────────────port 5007──            │
+ │         │                                 │               │
+ │   Manager (Laptop 1)  ──port 5005──  Worker 2 (Laptop 2) │
+ └──────────────────────────────────────────────────────────┘
+```
+
+| Device | Role |
+|--------|------|
+| **Laptop 1** | Manager — selects which worker to talk to |
+| **Pi (Helmet 1)** | Worker — two PTT channels: manager + peer worker |
+| **Laptop 2 (Helmet 2)** | Worker — same as Pi, keyboard-controlled |
+
+### Language System
+- Every helmet is configured with **one language** ("English" or "German").
+- When a message arrives, it is stored silently.
+- When you press the **PLAY button**, the system reads a preview and plays the message in your configured language — translating automatically if needed.
+- You can change your language any time via voice command (see Section 7.5).
 
 ---
 
-## Part 1 — Hardware Wiring
+## 2. Hardware Components
 
-### Components
+### Manager (Laptop 1)
+No extra hardware needed. Controlled entirely by keyboard.
 
-| Component | Role |
-|-----------|------|
-| Raspberry Pi 4 (2 GB) | Worker helmet brain |
-| SPH0645LM4H (I2S Mic) | Captures voice |
-| MAX98357A (I2S Amp) | Drives speaker |
-| Mini oval speaker (8 Ohm 1W) | Plays audio output |
-| 3× Push buttons | Speak / Reminder / Handover |
-| Toggle switch (3-pin ON-OFF-ON) | Speaker mode + Live Call |
-| Li-Ion 3.7V 5000 mAh + TP4056 | Power supply |
+### Worker Pi Helmet
 
----
+| Component | Purpose |
+|-----------|---------|
+| Raspberry Pi 4 | Main compute unit |
+| SPH0645LM4H I2S microphone | Voice capture |
+| MAX98357A I2S amplifier + speaker | Voice playback |
+| Push button × 5 | PTT (manager), PTT (worker), Play message, Reminder, Handover |
+| ON-OFF toggle switch | Speaker mode / live call |
+| LED + 220 Ω resistor | Message indicator (blinks when message arrives) |
 
-### 1.1 — I2S Microphone (SPH0645LM4H)
-
-```
-SPH0645LM4H Pin     Raspberry Pi Pin
-----------------------------------------------
-3V              --> Pin 1  (3.3V)
-GND             --> Pin 6  (GND)
-BCLK            --> Pin 12 (GPIO 18 – I2S CLK)
-DOUT            --> Pin 38 (GPIO 20 – I2S DIN)
-LRCL            --> Pin 35 (GPIO 19 – I2S FS)
-SEL             --> GND    (selects left channel)
-```
-
-> DOUT is "data out" from the mic — it goes INTO the Pi (GPIO 20).
+### Worker Laptop 2
+No extra hardware. Controlled by keyboard.
 
 ---
 
-### 1.2 — I2S Amplifier + Speaker (MAX98357A)
+## 3. Wiring Guide (Pi)
+
+### Microphone — SPH0645LM4H I2S
+
+| Mic Pin | Pi Pin | GPIO |
+|---------|--------|------|
+| VDD | 3.3 V (Pin 1) | — |
+| GND | GND (Pin 6) | — |
+| BCLK | Pin 12 | GPIO 18 |
+| LRCL | Pin 35 | GPIO 19 |
+| DOUT | Pin 38 | GPIO 20 |
+| SEL | GND | — |
+
+### Amplifier — MAX98357A I2S
+
+| Amp Pin | Pi Pin | GPIO |
+|---------|--------|------|
+| VIN | 5 V (Pin 2) | — |
+| GND | GND (Pin 9) | — |
+| BCLK | Pin 12 | GPIO 18 |
+| LRC | Pin 35 | GPIO 19 |
+| DIN | Pin 40 | GPIO 21 |
+
+### Buttons (active LOW — wire between GPIO pin and GND)
+
+| Button | GPIO | Pi Pin | Other Pin |
+|--------|------|--------|-----------|
+| BTN_SPEAK_MANAGER | 17 | Pin 11 | GND (Pin 14) |
+| BTN_SPEAK_WORKER | 24 | Pin 18 | GND (Pin 20) |
+| BTN_PLAY_MSG | 25 | Pin 22 | GND (Pin 25) |
+| BTN_CALL_MANAGER | 23 | Pin 16 | GND (Pin 14) | ← press button (NOT toggle switch)
+| BTN_REMINDER | 27 | Pin 13 | GND (Pin 14) |
+| BTN_HANDOVER | 22 | Pin 15 | GND (Pin 14) |
+
+### Message Indicator LED
 
 ```
-MAX98357A Pin       Raspberry Pi Pin
-----------------------------------------------
-VIN             --> Pin 2  (5V)
-GND             --> Pin 9  (GND)
-BCLK            --> Pin 12 (GPIO 18 – shared with mic)
-LRC             --> Pin 35 (GPIO 19 – shared with mic)
-DIN             --> Pin 40 (GPIO 21 – I2S DOUT)
-GAIN            --> leave unconnected (9 dB default)
-SD              --> leave unconnected (always on)
-```
-
-Connect your 8 Ohm speaker to the **+** and **−** screw terminals on the MAX98357A board.
-
----
-
-### 1.3 — Push Buttons
-
-Connect each button between its GPIO pin and any GND pin.
-No external resistors needed — internal pull-ups are enabled in software.
-
-```
-Button           GPIO (BCM)   Pi Header Pin   GND Pin
--------------------------------------------------------
-BTN_SPEAK        GPIO 17      Pin 11          Pin 14
-BTN_REMINDER     GPIO 27      Pin 13          Pin 20
-BTN_HANDOVER     GPIO 22      Pin 15          Pin 25
+GPIO 5 (Pin 29)  →  220 Ω resistor  →  LED (+)  →  LED (−)  →  GND (Pin 30)
 ```
 
 ---
 
-### 1.4 — Toggle Switch (3-pin ON-OFF-ON)
+## 4. Software Setup
 
-Use only the **centre pin** and **one outer pin**. Ignore the third pin.
+### 4.1 All Devices — Python & Dependencies
+
+```bash
+# Python 3.9+ required
+pip install faster-whisper ctranslate2 sentencepiece huggingface-hub
+pip install pyttsx3 pyaudio keyboard RPi.GPIO   # RPi.GPIO on Pi only
+```
+
+### 4.2 Pi — Enable I2S Audio
+
+Add these lines to `/boot/config.txt`, then reboot:
 
 ```
-Toggle pin       Raspberry Pi Pin
-----------------------------------------------
-Centre pin   --> Pin 16 (GPIO 23)
-Outer pin    --> Pin 17 (3.3V)
+dtparam=i2s=on
+dtoverlay=googlevoicehat-soundcard
 ```
 
-When flipped ON: GPIO 23 reads HIGH → speaker mode + live call activates.
+Verify:
+```bash
+arecord -l    # should list your I2S mic
+aplay -l      # should list your I2S amp
+```
+
+### 4.3 First Run — Download Models (internet required once)
+
+```bash
+python main.py   # downloads ~300 MB of models on first run
+```
+
+After the first run, the system works fully offline.
 
 ---
 
-### 1.5 — Power (Battery + TP4056 + Boost Converter)
+## 5. Configuration
 
-```
-Battery B+  --> TP4056 B+
-Battery B−  --> TP4056 B−
-TP4056 OUT+ --> Boost converter IN+   (e.g. MT3608, set to 5V output)
-TP4056 OUT− --> Boost converter IN−
-Boost OUT+  --> Pi Pin 2 (5V)
-Boost OUT−  --> Pi Pin 6 (GND)
-```
+Edit `config.py` on each device before first run:
 
-> **Important:** The Pi needs exactly 5V. Your Li-Ion battery outputs 3.7V.
-> A boost converter between the TP4056 and the Pi is **mandatory**.
+```python
+# Who is this device?
+HELMET_ROLE = "worker"        # "manager" or "worker"
+HELMET_ID   = "w-01"         # unique per device ("manager", "w-01", "w-02")
 
----
+# What language does this person speak?
+HELMET_LANGUAGE = "en"        # "en" = English,  "de" = German
 
-## Part 2 — Manager Laptop Setup (Windows)
-
-### Step 1 — Project location
-
-The project is already at: `C:\Users\dell\smart-helmet\`
-
-### Step 2 — Install Python dependencies
-
-Open **PowerShell** and run:
-
-```powershell
-cd C:\Users\dell\smart-helmet
-python -m pip install -r requirements.txt
+# Network
+MANAGER_IP     = "192.168.1.100"   # ← Laptop 1 (manager) LAN IP
+PEER_WORKER_IP = "192.168.1.101"   # ← IP of the OTHER worker (Pi workers only)
 ```
 
-### Step 3 — Download offline AI models (internet, one time only, ~300 MB)
+> **Tip:** You can also set the language by voice after startup — no need to edit the file.
+> Hold the PLAY button for 3 seconds and say "English" or "German".
 
-```powershell
-# Download OPUS-MT translation models (EN<->DE)
-python main.py --setup-models
+### Find your IP address
 
-# OR run directly:
-python -c "from translation import setup_offline_models; setup_offline_models()"
-```
-
-Then pre-cache Whisper:
-
-```powershell
-python -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cpu', compute_type='int8')"
-```
-
-After this the laptop runs **fully offline** — no internet needed to use it.
-
-### Step 4 — Find your laptop IP address
-
-```powershell
+```bash
+# Windows
 ipconfig
-```
 
-Look for **IPv4 Address** under your Wi-Fi adapter. Example: `192.168.1.100`
-Write it down — you will enter it in the Pi config.
-
-### Step 5 — Set the laptop role in config.py
-
-Open `C:\Users\dell\smart-helmet\config.py` and change:
-
-```python
-HELMET_ROLE           = "manager"
-HELMET_LANGUAGE_CODE  = "en-US"    # manager speaks English
-TARGET_LANGUAGE_CODE  = "de-DE"    # worker hears German
-HELMET_LANGUAGE_SHORT = "en"
-TARGET_LANGUAGE_SHORT = "de"
-WHISPER_MODEL_SIZE    = "base"     # more accurate on laptop
-```
-
-Leave `PARTNER_IP` unchanged — the manager is the server.
-
----
-
-## Part 3 — Raspberry Pi Setup
-
-### Step 1 — Flash the OS
-
-1. Download **Raspberry Pi Imager**: https://www.raspberrypi.com/software/
-2. Select: **Raspberry Pi OS Lite (64-bit)** — no desktop required
-3. Click the **gear icon** before writing and configure:
-   - Hostname: `smart-helmet`
-   - Enable SSH: yes
-   - Username: `pi` with a password of your choice
-   - Wi-Fi: your network name and password
-4. Write to SD card, insert into Pi, and power on
-
-### Step 2 — Connect via SSH from your laptop
-
-```powershell
-ssh pi@smart-helmet.local
-```
-
-If that does not work, find the Pi IP from your router admin page and use:
-```powershell
-ssh pi@192.168.1.xxx
-```
-
-### Step 3 — Copy the project to the Pi
-
-On your **laptop** in PowerShell:
-
-```powershell
-scp -r C:\Users\dell\smart-helmet pi@smart-helmet.local:/home/pi/smart-helmet
-```
-
-### Step 4 — Run the setup script
-
-On the **Pi** (via SSH):
-
-```bash
-cd /home/pi/smart-helmet
-chmod +x setup_pi.sh
-sudo ./setup_pi.sh
-```
-
-The script runs 7 steps automatically:
-1. Installs system packages (portaudio, espeak-ng, alsa-utils)
-2. Enables I2S mic overlay (SPH0645LM4H)
-3. Enables I2S amp overlay (MAX98357A)
-4. Disables onboard audio (I2S devices become card 0)
-5. Installs Python packages from requirements.txt
-6. Downloads offline AI models (Whisper + OPUS-MT, ~300 MB)
-7. Installs systemd service (auto-starts on boot)
-
-> Takes 5–10 minutes. Keep the Pi connected to the internet.
-
-### Step 5 — Configure the Pi role
-
-```bash
-nano /home/pi/smart-helmet/config.py
-```
-
-Change these lines:
-
-```python
-HELMET_ROLE           = "worker"
-HELMET_LANGUAGE_CODE  = "de-DE"          # worker speaks German
-TARGET_LANGUAGE_CODE  = "en-US"          # manager hears English
-HELMET_LANGUAGE_SHORT = "de"
-TARGET_LANGUAGE_SHORT = "en"
-PARTNER_IP            = "192.168.1.100"  # <- YOUR LAPTOP IP HERE
-WHISPER_MODEL_SIZE    = "tiny"           # keep tiny for Pi
-```
-
-Save: **Ctrl+O** then **Ctrl+X**.
-
-### Step 6 — Reboot and verify audio
-
-```bash
-sudo reboot
-```
-
-Wait 30 seconds, then SSH back in:
-
-```bash
-ssh pi@smart-helmet.local
-
-arecord -l    # should show I2S mic
-aplay -l      # should show I2S amp
-```
-
-Expected output:
-```
-**** List of CAPTURE Hardware Devices ****
-card 0: sndrpisimplecar [snd_rpi_simple_card], device 0: simple-card_codec_link snd-soc-dummy-dai-0 []
-```
-
-If the card number shown is **not 0**, update config.py:
-```python
-ALSA_MIC_DEVICE = "plughw:1,0"   # replace 1 with your card number
-ALSA_SPK_DEVICE = "plughw:1,0"
-```
-
-### Step 7 — Quick audio test
-
-```bash
-# Record 3 seconds from mic, then play back through speaker
-arecord -D plughw:0,0 -f S16_LE -r 16000 -d 3 /tmp/test.wav
-aplay  -D plughw:0,0 /tmp/test.wav
-
-# Play a 440 Hz test tone through the speaker
-speaker-test -D plughw:0,0 -t sine -f 440 -l 1
+# Linux / Pi
+hostname -I
 ```
 
 ---
 
-## Part 4 — Running the System
+## 6. Controls Reference
 
-Both devices **must be on the same Wi-Fi network or hotspot**.
+### Manager (Laptop 1 — keyboard)
 
-### Start the Manager Laptop
+| Key | Action |
+|-----|--------|
+| **1 / 2 / 3** | Select target worker for PTT message |
+| Hold **SPACE** | Record & send PTT message to selected worker |
+| **F1** | Call Worker A (Pi / w-01) — press to call, answer, or hang up |
+| **F2** | Call Worker B (Laptop 2 / w-02) — press to call, answer, or hang up |
+| **P** (short press) | Play next received message |
+| Hold **P** (3 sec) | Voice language configuration |
+| Hold **R** | Record a timed reminder |
+| **H** | Play last handover / record new handover |
+| Hold **SPACE** during call | Mute yourself (release = unmute) |
 
-Open **PowerShell as Administrator** (right-click → Run as administrator):
+### Worker Pi (physical buttons)
 
-```powershell
-cd C:\Users\dell\smart-helmet
-python main.py manager
-```
-
-Wait until you see and hear:
-```
-[INFO]  Role     : manager
-[INFO]  [NET] Manager: TCP server started on port 5005
-[INFO]  Keyboard controls: SPACE=speak/mute  r=reminder  h=handover  L=live-call
-        "Smart helmet ready."   <- spoken aloud
-```
-
-### Start the Worker Pi
-
-```bash
-# Option A: systemd service (auto-starts on boot — recommended)
-sudo systemctl start smart-helmet
-sudo journalctl -fu smart-helmet      # watch the live log
-
-# Option B: manual
-cd /home/pi/smart-helmet
-source .venv/bin/activate
-python main.py worker
-```
-
-Wait until you hear on the Pi speaker:
-```
-"Smart helmet ready."
-```
-
-And on the Pi log:
-```
-[INFO]  [NET] Connected to manager at 192.168.1.100:5005
-```
-
-> When **both** sides say "Smart helmet ready." — the system is fully connected and ready to use.
-
----
-
-## Part 5 — Using Each Feature
-
-### Feature 1 — Push-to-Talk Translation
-
-**Manager (laptop) → Worker (Pi):**
-
-| Step | What you do | What you hear |
-|------|------------|--------------|
-| 1 | Hold **SPACE** | "Recording." |
-| 2 | Speak English | (mic is active while key held) |
-| 3 | Release **SPACE** | "Sending." → "Message sent." |
-| 4 | Worker Pi speaker plays | German translation |
-
-**Worker (Pi) → Manager (laptop):**
-
-| Step | What you do | What you hear |
-|------|------------|--------------|
-| 1 | Hold **BTN_SPEAK** (GPIO 17, Pin 11) | "Aufnahme." |
-| 2 | Speak German | (mic is active while button held) |
-| 3 | Release button | "Senden." → "Nachricht gesendet." |
-| 4 | Manager laptop speaker plays | English translation |
-
-**Tips for best recognition:**
-- Speak at normal pace, clearly
-- Wait a moment after pressing before speaking
-- Stay 20–30 cm from the mic
-- Minimise background noise
-
----
-
-### Feature 2 — Task Reminders
-
-**Set a reminder:**
-
-| Step | What you do | What you hear |
-|------|------------|--------------|
-| 1 | Hold **R** key (or BTN_REMINDER, GPIO 27) | "Hold the button and record your reminder." |
-| 2 | Speak reminder + time | (recording) |
-| 3 | Release | "Reminder saved for 14:30." |
-
-**Supported time phrases:**
-
-| What you say | Parsed as |
-|-------------|-----------|
-| "at 14:30" | 14:30 |
-| "at 2 pm" | 14:00 |
-| "at noon" | 12:00 |
-| "morning inspection" | 09:00 |
-| "um 14 Uhr 30" | 14:30 |
-| "um 9 Uhr" | 09:00 |
-
-**At the set time, system plays automatically:**
-```
-"Reminder:"
-[your recorded message spoken aloud]
-```
-
-If no time is detected: "No time found. Please include a time, for example: at 14 30."
-
----
-
-### Feature 3 — Shift Handover
-
-**Record a handover (outgoing shift):**
-
-| Step | What you do | What you hear |
-|------|------------|--------------|
-| 1 | Press **H** key (or BTN_HANDOVER, GPIO 22) | "Hold the button and record your handover. Say your name, zone, and message." |
-| 2 | Hold and speak | (recording) |
-| 3 | Release | "Handover message saved." |
-
-Example message:
-> "This is Ahmed, Zone B. Scaffolding on level 3 needs safety inspection before the morning shift."
-
-**Play a handover (incoming shift):**
-
-| Step | What you do | What you hear |
-|------|------------|--------------|
-| 1 | Press **H** (unread message exists) | Full message plays |
-| 2 | Press **H** again | In record mode for next handover |
-
-The system always plays unread messages first.
-
----
-
-### Feature 4 — Live Call (Full Duplex Intercom)
-
-**Start a call:**
-
-| Device | Action |
+| Button | Action |
 |--------|--------|
-| Manager laptop | Press **L** key |
-| Worker Pi | Flip toggle switch **ON** |
+| Hold **BTN_SPEAK_MANAGER** (GPIO 17) | Record & send PTT to manager |
+| Hold **BTN_SPEAK_WORKER** (GPIO 24) | Record & send PTT to peer worker |
+| **BTN_CALL_MANAGER** (GPIO 23) | Call manager — press to call, answer, or hang up |
+| Short press **BTN_PLAY_MSG** (GPIO 25) | Play next received message |
+| Hold **BTN_PLAY_MSG** (3 sec) | Voice language configuration |
+| Hold **BTN_REMINDER** (GPIO 27) | Record timed reminder |
+| **BTN_HANDOVER** (GPIO 22) | Play handover / record new handover |
 
-**During the call:**
-- Both sides can speak and hear simultaneously
-- No translation — raw audio only
-- Hold **SPACE** (laptop) or **BTN_SPEAK** (Pi) to mute yourself
-- Release to unmute
+### Worker Laptop 2 (keyboard)
 
-**End the call:**
-- Manager: press **L** again
-- Worker: flip toggle switch **OFF**
+| Key | Action |
+|-----|--------|
+| Hold **SPACE** | Record & send PTT to manager |
+| Hold **W** | Record & send PTT to peer worker |
+| **C** | Call manager — press to call, answer, or hang up |
+| **P** (short press) | Play next received message |
+| Hold **P** (3 sec) | Voice language configuration |
+| Hold **R** | Record reminder |
+| **H** | Handover |
 
-Expected latency: 100–300 ms (network dependent, normal for conversation).
-
----
-
-### Feature 5 — Speaker Mode (Volume)
-
-| Toggle | What happens |
-|--------|-------------|
-| Flip **ON** (helmet removed) | Volume → 100%, live call starts |
-| Flip **OFF** (helmet on) | Volume → 80%, live call stops |
+> **Workers cannot call each other** — only manager ↔ worker calls.
 
 ---
 
-## Part 6 — Troubleshooting
+## 7. How to Use — Step by Step
 
-| Problem | Likely cause | Fix |
-|---------|-------------|-----|
-| No sound from speaker | Wiring or amp issue | Check MAX98357A connections; run speaker-test |
-| Mic not detected | I2S overlay inactive | Run `arecord -l`; check card number in config.py |
-| Worker cannot connect | Wrong PARTNER_IP or firewall | Verify with `ipconfig`; allow TCP port 5005 in Windows Firewall |
-| "Could not understand" | Audio too quiet or wrong language | Speak louder; check HELMET_LANGUAGE_CODE in config.py |
-| Reminder does not play | Wrong system clock | Run `date` on Pi; check DB with test_suite |
-| Echo during live call | Mic picks up speaker | Lower volume or add physical distance between mic and speaker |
-| Pi not on Wi-Fi | Wrong credentials | Re-flash SD card with correct Wi-Fi settings |
-| Keys not detected on laptop | Not running as Administrator | Right-click PowerShell → Run as administrator |
-| ALSA error: no such device | Card number mismatch | Run `arecord -l`; update ALSA_MIC_DEVICE in config.py |
-| ModuleNotFoundError | Package not installed | `python -m pip install -r requirements.txt` |
-| "Smart helmet ready" not heard | TTS or speaker problem | Run `python test_suite.py 3` to test TTS in isolation |
+### 7.1 Starting the System
+
+**Start in this order:**
+
+1. **Manager first:**
+   ```bash
+   python main.py manager
+   ```
+   You hear: *"Smart helmet ready."*
+
+2. **Worker Pi:**
+   ```bash
+   python main.py worker
+   ```
+   You hear: *"Smart helmet ready."*
+   Manager hears: *"Worker 1 connected. Press 1 to talk to this worker."*
+
+3. **Worker Laptop 2** (same as Pi):
+   ```bash
+   python main.py worker
+   ```
+   Manager hears: *"Worker 2 connected. Press 2 to talk to this worker."*
 
 ---
 
-## Part 7 — Quick Reference
+### 7.2 Sending a Message
 
-### Manager Laptop Keys (must run as Administrator)
+**Manager → Worker:**
+1. Press **1** to select Worker 1. TTS: *"Talking to worker 1."*
+2. Hold **SPACE** and speak. TTS: *"Recording."*
+3. Release **SPACE**. TTS: *"Processing."* then *"Message sent."*
+4. Worker's LED blinks fast + 3 beeps + TTS: *"1 message received. Press P to play."*
 
-| Key | Normal mode | During live call |
-|-----|-------------|-----------------|
-| Hold **SPACE** | Push-to-talk + translate | Mute yourself |
-| Hold **R** | Record reminder | — |
-| Press **H** | Play or record handover | — |
-| Press **L** | Start live call | Stop live call |
+**Worker → Manager:**
+1. Hold **SPACE** (or BTN_SPEAK_MANAGER on Pi) and speak.
+2. Release. TTS: *"Message sent."*
+3. Manager's TTS: *"1 message received. Press P to play."*
 
-### Worker Pi Physical Interface
+**Worker → Peer Worker (private channel, manager does not hear):**
+1. Hold **W** (or BTN_SPEAK_WORKER on Pi) and speak.
+2. Release. TTS: *"Message sent."*
+3. Peer worker's LED blinks + 3 beeps + *"1 message received. Press P to play."*
 
-| Button/Switch | GPIO (BCM) | Pi Header Pin | Action |
-|--------------|-----------|--------------|--------|
-| BTN_SPEAK | GPIO 17 | Pin 11 | PTT translate / Mute during call |
-| BTN_REMINDER | GPIO 27 | Pin 13 | Record reminder |
-| BTN_HANDOVER | GPIO 22 | Pin 15 | Play or record handover |
-| Toggle ON | GPIO 23 | Pin 16 | Live call + loud volume |
-| Toggle OFF | GPIO 23 | Pin 16 | PTT mode + normal volume |
+---
 
-### Key Files
+### 7.3 Playing a Received Message
 
-| File | Purpose |
-|------|---------|
-| `config.py` | All settings — edit HELMET_ROLE, PARTNER_IP, language codes |
-| `main.py` | Entry point — `python main.py manager` or `python main.py worker` |
-| `setup_pi.sh` | One-time Pi setup — run once with `sudo ./setup_pi.sh` |
-| `test_suite.py` | Test each feature — `python test_suite.py 3` |
-| `data/helmet.db` | SQLite database (reminders + handovers) |
-| `data/translation_models/` | Cached OPUS-MT translation models |
+When the LED blinks and you hear the beep:
 
-### Useful Pi Commands
+1. Press **P** (or BTN_PLAY_MSG on Pi) briefly.
+2. TTS reads a preview: *"From worker: Check the crane at..."*
+3. Full message plays automatically in your configured language.
+   - If sender spoke your language → plays directly.
+   - If sender spoke the other language → translated automatically before playing.
+4. If more messages remain: *"2 messages remaining."*
+5. When all played: *"No more messages."* LED turns off.
+
+---
+
+### 7.4 Making and Receiving a Live Call
+
+**Call States** — the same button does different things depending on state:
+
+| Your state when pressing | What happens |
+|--------------------------|-------------|
+| Idle | Initiates a call to that partner |
+| Calling (you called, waiting) | Cancels your outgoing call |
+| Incoming (they called you) | Answers the call |
+| In call | Hangs up |
+
+**Manager calls Worker A:**
+1. Press **F1**. TTS: *"Calling worker 1."*
+2. Worker A's helmet: 3 beeps + LED blinks + TTS: *"Incoming call from manager. Press call button to answer."*
+3. Worker A presses **BTN_CALL_MANAGER** / **C** key. TTS both sides: *"Call connected."*
+4. Real-time audio flows — both sides hear each other instantly.
+5. Either party presses their call button → TTS: *"Call ended."*
+
+**Worker calls Manager:**
+1. Worker presses **BTN_CALL_MANAGER** / **C** key. TTS: *"Calling manager."*
+2. Manager's laptop: 3 beeps + TTS: *"Incoming call from worker 1. Press F1 to answer."*
+3. Manager presses **F1**. TTS both sides: *"Call connected."*
+4. Either party presses their call button → *"Call ended."*
+
+**Muting during a call:** Hold **SPACE** (or BTN_SPEAK_MANAGER on Pi). Release to unmute.
+
+**If manager is already in a call** and another worker calls → TTS: *"Already in a call."*
+
+> Workers cannot call each other. Only manager ↔ worker calls.
+
+---
+
+### 7.5 Setting Your Language
+
+You can configure your helmet language at any time without editing any file:
+
+1. **Hold the PLAY button (P) for 3 full seconds.**
+2. TTS: *"Language setup. Say English or German."*
+3. Continue holding and say **"English"** or **"German"** (or "Englisch" / "Deutsch").
+4. Release button.
+5. TTS confirms: *"Configured for English."* / *"Konfiguriert für Deutsch."*
+
+The setting is saved to `data/settings.json` and loaded automatically on next boot.
+
+---
+
+### 7.6 Reminders
+
+1. Hold **R** and speak your reminder (e.g., *"Check valve in 30 minutes"*).
+2. Release. TTS: *"Reminder saved."*
+3. The reminder plays automatically at the scheduled time.
+
+---
+
+### 7.7 Shift Handover
+
+**Record handover at end of shift:**
+1. Press **H** and speak handover notes.
+2. Release. TTS: *"Handover saved."*
+
+**Play handover at start of shift:**
+1. Press **H** briefly (without speaking).
+2. TTS reads back the last recorded handover.
+
+---
+
+## 8. Testing Before First Use
+
+Run each test in order:
 
 ```bash
-# Check service status
-sudo systemctl status smart-helmet
-
-# Watch live log
-sudo journalctl -fu smart-helmet
-
-# Restart the service
-sudo systemctl restart smart-helmet
-
-# List audio input devices (microphones)
-arecord -l
-
-# List audio output devices (speakers)
-aplay -l
-
-# Record 3 s from mic and play back (audio hardware test)
-arecord -D plughw:0,0 -f S16_LE -r 16000 -d 3 /tmp/t.wav && aplay -D plughw:0,0 /tmp/t.wav
-
-# View saved reminders
-cd /home/pi/smart-helmet && source .venv/bin/activate
-python -c "import db; c=db.get_conn(); [print(dict(r)) for r in c.execute('SELECT * FROM reminders').fetchall()]"
-
-# View saved handover messages
-python -c "import db; c=db.get_conn(); [print(dict(r)) for r in c.execute('SELECT * FROM handover').fetchall()]"
+python test_suite.py 1   # module imports — all must PASS
+python test_suite.py 2   # database
+python test_suite.py 3   # audio recording (speak into mic when prompted)
+python test_suite.py 4   # text-to-speech playback
+python test_suite.py 5   # offline STT — Whisper
+python test_suite.py 6   # offline translation EN↔DE
+python test_suite.py 7   # network (run on both manager and worker)
+python test_suite.py 8   # full message flow simulation
 ```
+
+> Run all at once: `python test_suite.py`
+
+### Quick sanity checks
+
+```bash
+# On Pi — check mic
+arecord -d 3 -r 16000 -f S16_LE test.wav && aplay test.wav
+
+# On Pi — check speaker
+speaker-test -t wav -c 1
+
+# Both devices — check network
+ping <manager_ip>
+```
+
+---
+
+*Smart Helmet Communication System — Semester Project*
