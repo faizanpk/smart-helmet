@@ -7,13 +7,19 @@
 
 import os
 
+# ─── Data Storage ─────────────────────────────────────────────────────────────
+BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR      = os.path.join(BASE_DIR, "data")
+DB_PATH       = os.path.join(DATA_DIR, "helmet.db")
+SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")
+
 # ─── Helmet Identity ──────────────────────────────────────────────────────────
 # HELMET_ID must be unique across all helmets in the same session.
 #   manager   → "manager"
 #   worker 1  → "w-01"   (Pi)
 #   worker 2  → "w-02"   (Laptop 2)
-HELMET_ROLE = "worker"
-HELMET_ID   = "w-01"
+HELMET_ROLE = "manager"
+HELMET_ID   = "manager"
 
 # ─── Language Configuration ───────────────────────────────────────────────────
 # HELMET_LANGUAGE = the language THIS user speaks and wants to hear.
@@ -34,20 +40,30 @@ HELMET_LANGUAGE_SHORT = "en"      # ISO-639-1, used by OPUS-MT
 TARGET_LANGUAGE_CODE  = "de-DE"   # opposite language BCP-47
 TARGET_LANGUAGE_SHORT = "de"      # opposite language ISO-639-1
 
+USE_GOOGLE_TRANSLATE = True       # Translation — Google Translate via deep-translator
+
 # ─── Offline STT Model ────────────────────────────────────────────────────────
 # "tiny"  – 75 MB,  fast, recommended for Pi
 # "base"  – 145 MB, better accuracy, recommended for laptop
 WHISPER_MODEL_SIZE = "tiny"
 
+# Piper TTS voice models
+PIPER_VOICES_DIR = os.path.join(DATA_DIR, "piper_voices")
+PIPER_VOICE_EN = os.path.join(PIPER_VOICES_DIR, "en_US-lessac-medium.onnx")
+PIPER_VOICE_DE = os.path.join(PIPER_VOICES_DIR, "de_DE-thorsten-medium.onnx")
+
 # ─── Network – Manager ────────────────────────────────────────────────────────
-MANAGER_IP = "192.168.1.100"      # ← Laptop 1 (manager) LAN IP
+MANAGER_IP = "100.83.158.255"      # ← Laptop 1 (manager) LAN IP
 COMM_PORT  = 5005                 # TCP port: worker ↔ manager
 
 # Legacy alias kept for live_call.py
 PARTNER_IP = MANAGER_IP
 
-# ─── Network – Peer (worker-to-worker direct) ─────────────────────────────────
-PEER_WORKER_IP = "192.168.1.101"  # ← IP of the other worker helmet
+# ─── Network – Workers (manager needs each worker's IP to call/message them) ──
+WORKER_IPS = {
+    "w-01": "192.168.1.101",      # Raspberry Pi worker
+    "w-02": "192.168.1.102",      # Laptop worker
+}
 PEER_PORT      = 5007             # TCP port: worker ↔ worker
 
 # ─── Live Call ────────────────────────────────────────────────────────────────
@@ -109,9 +125,3 @@ ALSA_SPK_DEVICE = "plughw:1,0"
 # ─── Volume ──────────────────────────────────────────────────────────────────────────────
 VOLUME_NORMAL  = 80
 VOLUME_SPEAKER = 100
-
-# ─── Data Storage ─────────────────────────────────────────────────────────────
-BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR      = os.path.join(BASE_DIR, "data")
-DB_PATH       = os.path.join(DATA_DIR, "helmet.db")
-SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")

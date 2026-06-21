@@ -98,39 +98,21 @@ def is_pressed(pin: int) -> bool:
         return _kb.is_pressed(key) if key else False
     return False
 
-
 def wait_for_press(pin: int, timeout: float | None = None) -> bool:
     """
-    Block until the button is pressed.
-    Returns True when pressed, False on timeout (or if no keyboard lib).
+    Block until the button is pressed (polling safe for threads).
+    Returns True when pressed, False on timeout.
     """
-    if IS_PI:
-        event = threading.Event()
-
-        def _cb(_ch):
-            event.set()
-
-        GPIO.add_event_detect(pin, GPIO.FALLING, callback=_cb, bouncetime=200)
-        result = event.wait(timeout)
-        GPIO.remove_event_detect(pin)
-        return result
-
-    # Keyboard fallback
-    if HAS_KEYBOARD:
-        key = _KEY_MAP.get(pin, "")
-        if timeout is None:
-            _kb.wait(key)
+    start = time.time()
+    while True:
+        # is_pressed() already handles both the Pi and the keyboard fallback!
+        if is_pressed(pin):
             return True
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            if _kb.is_pressed(key):
-                return True
-            time.sleep(0.05)
-        return False
-
-    log.error("[GPIO] No input method available – cannot wait for button press.")
-    return False
-
+        
+        if timeout is not None and (time.time() - start) > timeout:
+            return False
+            
+        time.sleep(0.05)  # 20Hz polling – plenty fast for human fingers
 
 def wait_for_release(pin: int, max_seconds: float = 60.0) -> float:
     """

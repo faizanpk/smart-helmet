@@ -31,26 +31,44 @@ log = logging.getLogger(__name__)
 
 def _get_unplayed_handover() -> dict | None:
     """
-    Return the oldest unplayed handover row as a dict, or None.
-    'Unplayed' means a message left by the OTHER role for THIS helmet.
-    E.g. worker helmet reads messages left by the manager, and vice versa.
+    Return the oldest handover message from the OTHER role that THIS specific
+    helmet (by HELMET_ID) has not yet played.
     """
     other_role = "manager" if config.HELMET_ROLE == "worker" else "worker"
     conn = db.get_conn()
-    row = conn.execute(
-        """SELECT id, sender_name, sender_role, zone, message, timestamp
+    rows = conn.execute(
+        """SELECT id, sender_name, sender_id, sender_role, zone, message,
+                  timestamp, played_by
            FROM handover
-           WHERE sender_role = ? AND played = 0
-           ORDER BY id ASC LIMIT 1""",
+           WHERE sender_role = ?
+           ORDER BY id ASC""",
         (other_role,),
-    ).fetchone()
+    ).fetchall()
     conn.close()
-    return dict(row) if row else None
+
+    my_id = config.HELMET_ID
+    for row in rows:
+        row_dict = dict(row)
+        already_played = (row_dict.get("played_by") or "").split(",")
+        if my_id not in already_played:
+            return row_dict
+    return None
 
 
 def _mark_played(handover_id: int) -> None:
+    """Record that THIS helmet has now played this message (others still can)."""
     conn = db.get_conn()
-    conn.execute("UPDATE handover SET played = 1 WHERE id = ?", (handover_id,))
+    row = conn.execute(
+        "SELECT played_by FROM handover WHERE id = ?", (handover_id,)
+    ).fetchone()
+    existing = (row["played_by"] or "") if row else ""
+    ids = [x for x in existing.split(",") if x]
+    if config.HELMET_ID not in ids:
+        ids.append(config.HELMET_ID)
+    conn.execute(
+        "UPDATE handover SET played_by = ? WHERE id = ?",
+        (",".join(ids), handover_id),
+    )
     conn.commit()
     conn.close()
 
@@ -106,14 +124,16 @@ def record_handover(is_held_fn) -> None:
     conn = db.get_conn()
     conn.execute(
         """INSERT INTO handover
-           (sender_name, sender_role, zone, message, timestamp, played)
-           VALUES (?, ?, ?, ?, ?, 0)""",
+            (sender_name, sender_id, sender_role, zone, message, timestamp, played_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?)""",
         (
-            None,               # name – embedded in spoken message for prototype
+            None,                    # name – embedded in spoken message for prototype
+            config.HELMET_ID,        # ← now actually recorded: "w-01", "w-02", or "manager"
             config.HELMET_ROLE,
-            None,               # zone – embedded in spoken message for prototype
+            None,                    # zone – embedded in spoken message for prototype
             text,
             timestamp,
+            "",                      # nobody has played it yet
         ),
     )
     conn.commit()

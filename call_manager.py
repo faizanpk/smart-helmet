@@ -208,7 +208,6 @@ class CallSlot:
 
     def _start_audio(self) -> None:
         self._live_call = self._make_live_call(self.partner_ip)
-        self._live_call.start()
         log.info("[CALL] Audio streaming started (%s).", self.slot_id)
 
     def _stop_audio(self) -> None:

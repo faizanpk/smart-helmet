@@ -26,7 +26,7 @@ def get_conn() -> sqlite3.Connection:
 # ─── Schema ───────────────────────────────────────────────────────────────────
 
 def init_db():
-    """Create all tables if they do not already exist."""
+    """Create all tables if they do not already exist, and migrate old ones."""
     conn = get_conn()
     c = conn.cursor()
 
@@ -46,14 +46,37 @@ def init_db():
         CREATE TABLE IF NOT EXISTS handover (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             sender_name TEXT,               -- parsed from speech or config
+            sender_id   TEXT,               -- "w-01" | "w-02" | "manager"
             sender_role TEXT    NOT NULL,   -- "manager" | "worker"
             zone        TEXT,               -- location / zone on site
             message     TEXT    NOT NULL,   -- full transcribed text
             timestamp   TEXT    NOT NULL,   -- ISO datetime string
-            played      INTEGER DEFAULT 0   -- 0 = unread, 1 = played
+            played_by   TEXT    DEFAULT ''  -- comma-separated HELMET_IDs that read this
         )
     """)
+
+    _migrate_handover_table(c)
 
     conn.commit()
     conn.close()
     log.info("[DB] Database ready: %s", config.DB_PATH)
+
+
+def _migrate_handover_table(c):
+    """
+    Add new columns to an existing handover table if it was created by an
+    older version of this code (before sender_id/played_by existed).
+    Safe to run every startup — does nothing if columns already exist.
+    """
+    existing_cols = {row[1] for row in c.execute("PRAGMA table_info(handover)").fetchall()}
+
+    if "sender_id" not in existing_cols:
+        c.execute("ALTER TABLE handover ADD COLUMN sender_id TEXT")
+        log.info("[DB] Migrated: added handover.sender_id")
+
+    if "played_by" not in existing_cols:
+        c.execute("ALTER TABLE handover ADD COLUMN played_by TEXT DEFAULT ''")
+        log.info("[DB] Migrated: added handover.played_by")
+
+    if "played" in existing_cols:
+        log.info("[DB] Note: legacy 'played' column still present but no longer used by code.")

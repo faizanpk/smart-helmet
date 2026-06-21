@@ -69,6 +69,16 @@ LONG_PRESS_SECS = 3.0   # BTN_PLAY_MSG held ≥ this → language config mode
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _get_peer_worker_ip() -> str:
+    """
+    For a worker helmet, return the IP of the OTHER worker (not itself).
+    Looks up config.WORKER_IPS and skips the entry matching our own HELMET_ID.
+    """
+    for wid, ip in config.WORKER_IPS.items():
+        if wid != config.HELMET_ID:
+            return ip
+    return ""
+
 def _preview_text(text: str, max_words: int = 6) -> str:
     words = text.split()
     if len(words) <= max_words:
@@ -286,7 +296,7 @@ def _record_and_send(channel: str) -> None:
             ok = network.send_voice_message(text, lang)
     else:
         ok = peer_network.send_voice_message_to_peer(
-            config.PEER_WORKER_IP, config.PEER_PORT,
+            _get_peer_worker_ip(), config.PEER_PORT,
             text, lang, sender_id=config.HELMET_ID,
         )
 
@@ -497,7 +507,7 @@ def main() -> None:
     log.info("  Language : %s", config.HELMET_LANGUAGE_CODE)
     log.info("  Manager  : %s:%d", config.MANAGER_IP, config.COMM_PORT)
     if config.HELMET_ROLE == "worker":
-        log.info("  Peer     : %s:%d", config.PEER_WORKER_IP, config.PEER_PORT)
+        log.info("  Peer     : %s:%d", _get_peer_worker_ip(), config.PEER_PORT)
     log.info("=" * 60)
 
     # 2. Offline models
@@ -532,7 +542,7 @@ def main() -> None:
             _call_slots[wid] = CallSlot(
                 slot_id=wid,
                 partner_label=label,
-                partner_ip="",           # resolved at call time (see note below)
+                partner_ip=config.WORKER_IPS.get(wid, ""),           # resolved at call time (see note below)
                 send_request_fn=lambda sid: network.send_call_request(sid),
                 send_accept_fn=lambda sid: network.send_call_accept(sid),
                 send_end_fn=lambda sid: network.send_call_end(sid),

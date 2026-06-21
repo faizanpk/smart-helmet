@@ -16,7 +16,8 @@ import re
 import threading
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
+from translation import play_alert_beep
 
 import schedule as _schedule  # third-party 'schedule' package
 
@@ -59,29 +60,42 @@ def parse_trigger_time(text: str) -> str | None:
     """
     Extract a HH:MM (24-hour) trigger time from a transcribed reminder string.
     Returns a string like '14:30', or None if no time found.
+
+    Explicit numeric times are checked FIRST since they are unambiguous.
+    Word-based shortcuts ("noon", "Abend") are only used as a fallback,
+    and only match whole words — not substrings inside longer words like
+    "Abendessen".
     """
     t = text.lower()
 
-    # 1. Word-based shortcuts
-    for word, hhmm in _WORD_TIMES.items():
-        if word in t:
-            return hhmm
-
-    # 2. Explicit HH:MM  (e.g. "14:30", "9:00")
-    m = re.search(r'\b(\d{1,2}):(\d{2})\b', t)
+    # 1. Explicit HH:MM  (e.g. "14:30", "9:00") — most precise, check first
+    m = re.search(r'\b([01]?\d|2[0-3]):([0-5]\d)\b', t)
     if m:
         return f"{int(m.group(1)):02d}:{m.group(2)}"
 
-    # 3. "at N am/pm"  (e.g. "at 2 pm", "at 10 am")
+    # 2. "at N am/pm"  (e.g. "at 2 pm", "at 10 am")
     m = re.search(r'\bat\s+(\d{1,2})\s*(am|pm)\b', t)
     if m:
         return _ampm_to_24(int(m.group(1)), m.group(2))
 
-    # 4. German "N Uhr [M]"  (e.g. "14 Uhr 30", "um 9 Uhr")
+    # 3. German "N Uhr [M]"  (e.g. "14 Uhr 30", "um 9 Uhr")
     m = re.search(r'\b(\d{1,2})\s*uhr(?:\s+(\d{2}))?\b', t)
     if m:
         minutes = m.group(2) or "00"
         return f"{int(m.group(1)):02d}:{minutes}"
+
+    # 4. Word-based shortcuts — fallback only, whole-word match required
+    for word, hhmm in _WORD_TIMES.items():
+        if re.search(rf'\b{re.escape(word)}\b', t):
+            return hhmm
+    
+    # 5. Relative "in N minutes/hours" (English & German)
+    m = re.search(r'\bin\s+(\d+)\s+(minute|minutes|minuten|hour|hours|stunde|stunden)\b', t)
+    if m:
+        val = int(m.group(1))
+        unit = m.group(2)
+        delta = timedelta(hours=val) if unit.startswith(('hour', 'stunde')) else timedelta(minutes=val)
+        return (datetime.now() + delta).strftime("%H:%M")
 
     return None
 
@@ -92,11 +106,11 @@ def save_reminder(message: str, trigger_time: str) -> None:
     """Persist a reminder to the database."""
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn = db.get_conn()
-    conn.execute(
-        "INSERT INTO reminders (message, trigger_time, done, created_at) VALUES (?, ?, 0, ?)",
-        (message, trigger_time, created_at),
-    )
-    conn.commit()
+    with conn:
+        conn.execute(
+            "INSERT INTO reminders (message, trigger_time, done, created_at) VALUES (?, ?, 0, ?)",
+            (message, trigger_time, created_at),
+        )
     conn.close()
     log.info("[REMINDER] Saved: '%s' at %s", message, trigger_time)
 
@@ -112,7 +126,7 @@ def record_and_save_reminder(is_held_fn) -> None:
       4. Parse time
       5. Save or report failure
     """
-    speak("Hold the button and record your reminder.", config.HELMET_LANGUAGE_CODE)
+    play_alert_beep(1)
 
     audio = record_until_release(is_held_fn, max_seconds=config.RECORD_SECONDS_MAX)
 
@@ -142,20 +156,26 @@ def record_and_save_reminder(is_held_fn) -> None:
 # ─── Playback check (runs every minute) ──────────────────────────────────────
 
 def _check_and_play_reminders() -> None:
-    """Check for due reminders and play them via TTS."""
     now = datetime.now().strftime("%H:%M")
     conn = db.get_conn()
     rows = conn.execute(
         "SELECT id, message FROM reminders WHERE trigger_time = ? AND done = 0",
         (now,),
     ).fetchall()
+    
     for row in rows:
         log.info("[REMINDER] Triggered: '%s'", row["message"])
-        speak("Reminder:", config.HELMET_LANGUAGE_CODE)
-        audio = text_to_speech(row["message"], language_code=config.HELMET_LANGUAGE_CODE)
-        play_audio_bytes(audio)
-        conn.execute("UPDATE reminders SET done = 1 WHERE id = ?", (row["id"],))
-    conn.commit()
+        
+        # Pre-generate the heavy TTS first to avoid a pause
+        msg_audio = text_to_speech(row["message"], language_code=config.HELMET_LANGUAGE_CODE)
+        
+        # Play seamlessly
+        speak("Reminder.", config.HELMET_LANGUAGE_CODE)
+        play_audio_bytes(msg_audio)
+        
+        with conn:
+            conn.execute("UPDATE reminders SET done = 1 WHERE id = ?", (row["id"],))
+            
     conn.close()
 
 

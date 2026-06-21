@@ -66,6 +66,9 @@ _worker_send_lock = threading.Lock()
 _on_worker_connected:    Optional[Callable] = None   # (worker_id: str) -> None
 _on_worker_disconnected: Optional[Callable] = None   # (worker_id: str) -> None
 
+_send_locks: Dict[socket.socket, threading.Lock] = {}
+_send_locks_guard = threading.Lock()
+
 
 def set_worker_event_callbacks(on_connect=None, on_disconnect=None):
     """Register callbacks for worker connection events (manager only)."""
@@ -76,10 +79,16 @@ def set_worker_event_callbacks(on_connect=None, on_disconnect=None):
 
 # ─── Internal framing helpers ─────────────────────────────────────────────────
 
+def _get_send_lock(sock: socket.socket) -> threading.Lock:
+    with _send_locks_guard:
+        if sock not in _send_locks:
+            _send_locks[sock] = threading.Lock()
+        return _send_locks[sock]
+
+
 def _send_frame(sock: socket.socket, msg_type: str,
-                payload: bytes = b"", meta: Optional[dict] = None,
-                lock: Optional[threading.Lock] = None) -> bool:
-    """Encode and send one framed message. Thread-safe if lock provided."""
+                payload: bytes = b"", meta: Optional[dict] = None) -> bool:
+    """Encode and send one framed message. Thread-safe per socket."""
     header = {
         "type":        msg_type,
         "payload_len": len(payload),
@@ -87,8 +96,9 @@ def _send_frame(sock: socket.socket, msg_type: str,
     }
     header_bytes = json.dumps(header).encode("utf-8")
     frame = struct.pack(">I", len(header_bytes)) + header_bytes + payload
-    ctx = lock if lock else threading.Lock()
-    with ctx:
+
+    lock = _get_send_lock(sock)
+    with lock:
         try:
             sock.sendall(frame)
             return True
@@ -162,7 +172,10 @@ def _manager_recv_loop(conn: socket.socket, addr: str, on_message) -> None:
     # Clean up on disconnect
     if worker_id:
         with _workers_lock:
-            _workers.pop(worker_id, None)
+            if _workers.get(worker_id) is conn:
+                _workers.pop(worker_id, None)
+        with _send_locks_guard:
+            _send_locks.pop(conn, None)       
         log.warning("[NET] Worker '%s' disconnected.", worker_id)
         if _on_worker_disconnected:
             try:
