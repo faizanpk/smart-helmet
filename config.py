@@ -31,11 +31,11 @@ HELMET_ID   = "manager"
 # The setting is saved to data/settings.json and loaded on next boot.
 #
 HELMET_LANGUAGE = "en"   # "en" or "de"
+HELMET_LANGUAGE_SHORT = "en"
 
 # BCP-47 codes (derived in main.py from HELMET_LANGUAGE via apply_language_setting)
 # Set manually here only if you are NOT using the voice configuration feature.
 HELMET_LANGUAGE_CODE  = "en-US"   # used for STT language hint and local TTS
-HELMET_LANGUAGE_SHORT = "en"      # ISO-639-1, used by OPUS-MT
 
 TARGET_LANGUAGE_CODE  = "de-DE"   # opposite language BCP-47
 TARGET_LANGUAGE_SHORT = "de"      # opposite language ISO-639-1
@@ -65,6 +65,8 @@ WORKER_IPS = {
     "w-02": "192.168.1.102",      # Laptop worker
 }
 PEER_PORT      = 5007             # TCP port: worker ↔ worker
+
+_FIXED_WORKER_ORDER = ["w-01", "w-02"]
 
 # ─── Live Call ────────────────────────────────────────────────────────────────
 LIVE_CALL_PORT = 5006             # UDP port for full-duplex intercom

@@ -21,7 +21,7 @@ from translation import (
     voice_to_text,
     text_to_speech,
     play_audio_bytes,
-    speak,
+    speak, t,
 )
 
 log = logging.getLogger(__name__)
@@ -76,7 +76,6 @@ def _mark_played(handover_id: int) -> None:
 # ─── Playback ────────────────────────────────────────────────────────────────
 
 def play_handover(entry: dict) -> None:
-    """Synthesise and play a handover entry via TTS in the user's language."""
     zone_part = f"Zone {entry['zone']}. " if entry.get("zone") else ""
     name_part = entry.get("sender_name") or entry["sender_role"].capitalize()
     full_text = (
@@ -85,38 +84,27 @@ def play_handover(entry: dict) -> None:
         f"{entry['message']}"
     )
     log.info("[HANDOVER] Playing: %s", full_text)
-    speak("Playing handover message.", config.HELMET_LANGUAGE_CODE)
+    speak(t("handover_playing"), config.HELMET_LANGUAGE_CODE)
     audio = text_to_speech(full_text, language_code=config.HELMET_LANGUAGE_CODE)
     play_audio_bytes(audio)
     _mark_played(entry["id"])
-    speak("End of handover message.", config.HELMET_LANGUAGE_CODE)
+    speak(t("handover_end"), config.HELMET_LANGUAGE_CODE)
 
-
-# ─── Recording ───────────────────────────────────────────────────────────────
 
 def record_handover(is_held_fn) -> None:
-    """
-    Record a new handover message (hold-to-talk), save to DB.
-    User should speak: name, zone/location, then the message.
-    Example: "This is Ahmed, Zone B. The scaffolding on level 3 needs checking."
-    """
-    speak(
-        "Hold the button and record your handover. "
-        "Say your name, zone, and your message.",
-        config.HELMET_LANGUAGE_CODE,
-    )
+    speak(t("handover_prompt"), config.HELMET_LANGUAGE_CODE)
 
     audio = record_until_release(is_held_fn, max_seconds=config.RECORD_SECONDS_MAX)
 
     if len(audio) < config.CHUNK * 2:
-        speak("Recording too short. Handover not saved.", config.HELMET_LANGUAGE_CODE)
+        speak(t("handover_too_short"), config.HELMET_LANGUAGE_CODE)
         return
 
-    speak("Processing handover.", config.HELMET_LANGUAGE_CODE)
+    speak(t("handover_processing"), config.HELMET_LANGUAGE_CODE)
     text = voice_to_text(audio, language_code=config.HELMET_LANGUAGE_CODE)
 
     if not text:
-        speak("Could not understand. Handover not saved.", config.HELMET_LANGUAGE_CODE)
+        speak(t("handover_not_understood"), config.HELMET_LANGUAGE_CODE)
         return
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -126,21 +114,13 @@ def record_handover(is_held_fn) -> None:
         """INSERT INTO handover
             (sender_name, sender_id, sender_role, zone, message, timestamp, played_by)
             VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (
-            None,                    # name – embedded in spoken message for prototype
-            config.HELMET_ID,        # ← now actually recorded: "w-01", "w-02", or "manager"
-            config.HELMET_ROLE,
-            None,                    # zone – embedded in spoken message for prototype
-            text,
-            timestamp,
-            "",                      # nobody has played it yet
-        ),
+        (None, config.HELMET_ID, config.HELMET_ROLE, None, text, timestamp, ""),
     )
     conn.commit()
     conn.close()
 
     log.info("[HANDOVER] Saved: '%s'", text)
-    speak("Handover message saved.", config.HELMET_LANGUAGE_CODE)
+    speak(t("handover_saved"), config.HELMET_LANGUAGE_CODE)
 
 
 # ─── Button handler (called from main event loop) ─────────────────────────────
@@ -155,3 +135,38 @@ def handle_handover_button(is_held_fn) -> None:
         play_handover(entry)
     else:
         record_handover(is_held_fn)
+
+
+def get_last_handover_for_replay() -> dict | None:
+    """
+    Return the most recent handover entry from the OTHER role, regardless
+    of played_by state — used for manual replay, does not affect read status.
+    """
+    other_role = "manager" if config.HELMET_ROLE == "worker" else "worker"
+    conn = db.get_conn()
+    row = conn.execute(
+        """SELECT id, sender_name, sender_id, sender_role, zone, message,
+                  timestamp, played_by
+           FROM handover WHERE sender_role = ? ORDER BY id DESC LIMIT 1""",
+        (other_role,),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def replay_last_handover() -> None:
+    """Replay the most recent handover from the other role, without affecting read status."""
+    entry = get_last_handover_for_replay()
+    if entry is None:
+        speak(t("no_handover_to_replay"), config.HELMET_LANGUAGE_CODE)
+        return
+
+    zone_part = f"Zone {entry['zone']}. " if entry.get("zone") else ""
+    name_part = entry.get("sender_name") or entry["sender_role"].capitalize()
+    full_text = (f"Handover from {name_part} at {entry['timestamp']}. "
+                f"{zone_part}{entry['message']}")
+
+    speak(t("handover_replaying"), config.HELMET_LANGUAGE_CODE)
+    audio = text_to_speech(full_text, language_code=config.HELMET_LANGUAGE_CODE)
+    play_audio_bytes(audio)
+    speak(t("handover_end"), config.HELMET_LANGUAGE_CODE)

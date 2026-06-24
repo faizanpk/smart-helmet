@@ -35,7 +35,7 @@ Also set `PEER_WORKER_IP` on each worker to the IP of the *other* worker.
 ### 2. Install Python packages (run once)
 
 ```bash
-pip install faster-whisper ctranslate2 sentencepiece huggingface-hub pyttsx3 pyaudio keyboard
+pip install faster-whisper ctranslate2 deep-translator piper-tts pyaudio keyboard
 ```
 
 On the Pi only, also run:

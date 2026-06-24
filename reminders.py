@@ -17,15 +17,17 @@ import threading
 import time
 import logging
 from datetime import datetime, timedelta
-from translation import play_alert_beep
 
 import schedule as _schedule  # third-party 'schedule' package
 
 import config
 import db
-from translation import record_until_release, voice_to_text, text_to_speech, play_audio_bytes, speak
+from translation import record_until_release, voice_to_text, text_to_speech, play_audio_bytes, speak, play_alert_beep, t
 
 log = logging.getLogger(__name__)
+
+_last_triggered: dict | None = None
+_last_triggered_lock = threading.Lock()
 
 # ─── Time parsing ─────────────────────────────────────────────────────────────
 
@@ -118,65 +120,61 @@ def save_reminder(message: str, trigger_time: str) -> None:
 # ─── Record + save flow (triggered by button) ─────────────────────────────────
 
 def record_and_save_reminder(is_held_fn) -> None:
-    """
-    Full flow for the BTN_REMINDER button:
-      1. Prompt user (TTS)
-      2. Record while button held
-      3. STT
-      4. Parse time
-      5. Save or report failure
-    """
-    play_alert_beep(1)
+    speak(t("reminder_prompt"), config.HELMET_LANGUAGE_CODE)
 
     audio = record_until_release(is_held_fn, max_seconds=config.RECORD_SECONDS_MAX)
 
     if len(audio) < config.CHUNK * 2:
-        speak("Recording too short. Please try again.", config.HELMET_LANGUAGE_CODE)
+        speak(t("reminder_too_short"), config.HELMET_LANGUAGE_CODE)
         return
 
-    speak("Processing reminder.", config.HELMET_LANGUAGE_CODE)
+    speak(t("reminder_processing"), config.HELMET_LANGUAGE_CODE)
     text = voice_to_text(audio, language_code=config.HELMET_LANGUAGE_CODE)
 
     if not text:
-        speak("Could not understand. Please try again.", config.HELMET_LANGUAGE_CODE)
+        speak(t("not_understood_retry"), config.HELMET_LANGUAGE_CODE)
         return
 
     trigger_time = parse_trigger_time(text)
     if not trigger_time:
-        speak(
-            "No time found in your message. Please include a time, for example: at 14 30.",
-            config.HELMET_LANGUAGE_CODE,
-        )
+        speak(t("reminder_no_time"), config.HELMET_LANGUAGE_CODE)
         return
 
     save_reminder(text, trigger_time)
-    speak(f"Reminder saved for {trigger_time}.", config.HELMET_LANGUAGE_CODE)
+    speak(t("reminder_saved", time=trigger_time), config.HELMET_LANGUAGE_CODE)
 
-
-# ─── Playback check (runs every minute) ──────────────────────────────────────
 
 def _check_and_play_reminders() -> None:
+    global _last_triggered
     now = datetime.now().strftime("%H:%M")
     conn = db.get_conn()
     rows = conn.execute(
         "SELECT id, message FROM reminders WHERE trigger_time = ? AND done = 0",
         (now,),
     ).fetchall()
-    
     for row in rows:
         log.info("[REMINDER] Triggered: '%s'", row["message"])
-        
-        # Pre-generate the heavy TTS first to avoid a pause
-        msg_audio = text_to_speech(row["message"], language_code=config.HELMET_LANGUAGE_CODE)
-        
-        # Play seamlessly
-        speak("Reminder.", config.HELMET_LANGUAGE_CODE)
-        play_audio_bytes(msg_audio)
-        
-        with conn:
-            conn.execute("UPDATE reminders SET done = 1 WHERE id = ?", (row["id"],))
-            
+        play_alert_beep(2)
+        speak(t("reminder_label"), config.HELMET_LANGUAGE_CODE)
+        audio = text_to_speech(row["message"], language_code=config.HELMET_LANGUAGE_CODE)
+        play_audio_bytes(audio)
+        with _last_triggered_lock:
+            _last_triggered = {"message": row["message"]}
+        conn.execute("UPDATE reminders SET done = 1 WHERE id = ?", (row["id"],))
+    conn.commit()
     conn.close()
+
+
+def replay_last_reminder() -> None:
+    """Replay the most recently fired reminder (single most recent only)."""
+    with _last_triggered_lock:
+        last = dict(_last_triggered) if _last_triggered else None
+    if last is None:
+        speak(t("no_reminder_to_replay"), config.HELMET_LANGUAGE_CODE)
+        return
+    speak(t("reminder_label"), config.HELMET_LANGUAGE_CODE)
+    audio = text_to_speech(last["message"], language_code=config.HELMET_LANGUAGE_CODE)
+    play_audio_bytes(audio)
 
 
 # ─── Background reminder loop ─────────────────────────────────────────────────

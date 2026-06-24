@@ -6,7 +6,7 @@
 #   python main.py worker     (override role at runtime)
 #
 # ─── Manager keyboard controls ─────────────────────────────────────────────────
-#   1 / 2 / 3   – select target worker for PTT
+#   1 / 2   – select target worker for PTT
 #   Hold SPACE  – record & send PTT message to selected worker
 #   F1          – call/answer/end call with Worker A (w-01 / Pi)
 #   F2          – call/answer/end call with Worker B (w-02 / Laptop)
@@ -44,11 +44,11 @@ import network
 import peer_network
 from call_manager import CallSlot
 from live_call import LiveCall
-from reminders import start_reminder_loop, record_and_save_reminder
-from handover import handle_handover_button
+from reminders import start_reminder_loop, record_and_save_reminder, replay_last_reminder
+from handover import handle_handover_button, replay_last_handover
 from translation import (
     play_audio_bytes, speak, translate_text, text_to_speech,
-    transcribe_only, play_alert_beep,
+    transcribe_only, play_alert_beep, voice_to_text, t,
     parse_config_command, load_language_setting,
     save_language_setting, apply_language_setting,
     record_until_release, setup_offline_models,
@@ -63,6 +63,17 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 LONG_PRESS_SECS = 3.0   # BTN_PLAY_MSG held ≥ this → language config mode
+
+_last_action_time: Dict[int, float] = {}
+DOUBLE_TAP_WINDOW = 2.0   # seconds
+
+
+def _is_double_tap(pin: int) -> bool:
+    """True if this button was also pressed within the last DOUBLE_TAP_WINDOW seconds."""
+    now = time.time()
+    last = _last_action_time.get(pin, 0)
+    _last_action_time[pin] = now
+    return (now - last) <= DOUBLE_TAP_WINDOW
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -129,19 +140,22 @@ _selection_lock = threading.Lock()
 
 def _select_worker(index: int) -> None:
     global _selected_worker_id
-    workers = network.get_worker_ids()
-    if not workers:
-        speak("No workers connected.", config.HELMET_LANGUAGE_CODE)
+
+    if index < 1 or index > len(config._FIXED_WORKER_ORDER):
+        speak(t("only_n_workers", n=len(config._FIXED_WORKER_ORDER)), config.HELMET_LANGUAGE_CODE)
         return
-    if index < 1 or index > len(workers):
-        n = len(workers)
-        speak(f"Only {n} worker{'s' if n > 1 else ''} connected.",
-              config.HELMET_LANGUAGE_CODE)
+    
+    target_id = config._FIXED_WORKER_ORDER[index - 1]
+    connected = network.get_worker_ids()
+
+    if target_id not in connected:
+        speak(t("only_n_workers", n=index), config.HELMET_LANGUAGE_CODE)
         return
+
     with _selection_lock:
-        _selected_worker_id = workers[index - 1]
+        _selected_worker_id = target_id
     log.info("[MAIN] PTT target set to '%s'.", _selected_worker_id)
-    speak(f"Talking to worker {index}.", config.HELMET_LANGUAGE_CODE)
+    speak(t("talking_to_worker", index=index), config.HELMET_LANGUAGE_CODE)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -166,8 +180,7 @@ def _handle_incoming_voice_message(meta: dict, channel: str = "manager") -> None
     led_handler.start_pending_blink()
 
     n = message_store.count()
-    speak(f"{n} message{'s' if n > 1 else ''} received. Press P to play.",
-          config.HELMET_LANGUAGE_CODE)
+    speak(t("n_messages_received", n=n), config.HELMET_LANGUAGE_CODE)
 
 
 def _on_network_message(msg_type: str, meta: dict, payload: bytes) -> None:
@@ -231,17 +244,15 @@ def _on_worker_connected(worker_id: str) -> None:
     workers = network.get_worker_ids()
     n = workers.index(worker_id) + 1 if worker_id in workers else "?"
     log.info("[MAIN] Worker '%s' connected (slot %s).", worker_id, n)
-    speak(f"Worker {n} connected. Press F{n} to call, or {n} to send a message.",
-          config.HELMET_LANGUAGE_CODE)
+    speak(t("worker_connected", n=n), config.HELMET_LANGUAGE_CODE)
 
 
 def _on_worker_disconnected(worker_id: str) -> None:
     log.info("[MAIN] Worker '%s' disconnected.", worker_id)
-    # End any active call with this worker
     slot = _get_slot_for_worker(worker_id)
     if slot and slot.is_in_call:
         slot.on_call_ended()
-    speak("A worker disconnected.", config.HELMET_LANGUAGE_CODE)
+    speak(t("worker_disconnected"), config.HELMET_LANGUAGE_CODE)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -260,24 +271,22 @@ def _get_active_call_slot() -> Optional[CallSlot]:
 
 
 def _record_and_send(channel: str) -> None:
-    """Common PTT flow: hold button → record → STT → send text."""
     pin = (config.BTN_SPEAK_MANAGER if channel == "manager"
            else config.BTN_SPEAK_WORKER)
 
-    speak("Recording.", config.HELMET_LANGUAGE_CODE)
+    speak(t("recording"), config.HELMET_LANGUAGE_CODE)
     is_held = lambda: gpio.is_pressed(pin)
     audio = record_until_release(is_held)
 
     if len(audio) < config.CHUNK * 4:
-        speak("Too short. Hold while speaking.", config.HELMET_LANGUAGE_CODE)
+        speak(t("too_short_hold"), config.HELMET_LANGUAGE_CODE)
         return
 
-    speak("Processing.", config.HELMET_LANGUAGE_CODE)
+    speak(t("processing"), config.HELMET_LANGUAGE_CODE)
     text, detected_lang = transcribe_only(audio)
 
     if not text:
-        speak("Could not understand. Please try again.",
-              config.HELMET_LANGUAGE_CODE)
+        speak(t("not_understood_retry"), config.HELMET_LANGUAGE_CODE)
         return
 
     lang = detected_lang if detected_lang in ("en", "de") else config.HELMET_LANGUAGE
@@ -288,8 +297,7 @@ def _record_and_send(channel: str) -> None:
             with _selection_lock:
                 target = _selected_worker_id
             if target is None:
-                speak("No worker selected. Press 1, 2, or 3.",
-                      config.HELMET_LANGUAGE_CODE)
+                speak(t("no_worker_selected"), config.HELMET_LANGUAGE_CODE)
                 return
             ok = network.send_voice_message_to(target, text, lang)
         else:
@@ -300,21 +308,19 @@ def _record_and_send(channel: str) -> None:
             text, lang, sender_id=config.HELMET_ID,
         )
 
-    speak("Message sent." if ok else "Partner not reachable.",
+    speak(t("message_sent") if ok else t("partner_unreachable"),
           config.HELMET_LANGUAGE_CODE)
 
 
 def _handle_speak_manager() -> None:
-    """SPACE — PTT to manager, OR mute if in an active call."""
     active_slot = _get_active_call_slot()
     if active_slot:
-        # Mute during call
-        speak("Muted.", config.HELMET_LANGUAGE_CODE)
+        speak(t("muted"), config.HELMET_LANGUAGE_CODE)
         active_slot.mute(True)
         while gpio.is_pressed(config.BTN_SPEAK_MANAGER):
             time.sleep(0.05)
         active_slot.mute(False)
-        speak("Unmuted.", config.HELMET_LANGUAGE_CODE)
+        speak(t("unmuted"), config.HELMET_LANGUAGE_CODE)
         return
     _record_and_send("manager")
 
@@ -331,30 +337,94 @@ def _handle_speak_worker() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _handle_call_button(slot_id: str) -> None:
-    """
-    Generic call button handler.
-    slot_id : "w-01", "w-02" (manager), or "manager" (worker)
-    """
     slot = _call_slots.get(slot_id)
     if slot is None:
         log.warning("[MAIN] No call slot for '%s'.", slot_id)
         return
 
-    # If any OTHER slot is in call, new call attempt is blocked
     for sid, s in _call_slots.items():
         if sid != slot_id and s.is_in_call:
-            speak("Already in a call.", config.HELMET_LANGUAGE_CODE)
+            speak(t("already_in_call"), config.HELMET_LANGUAGE_CODE)
             return
 
     slot.on_button_pressed()
 
+
+def _play_next_message() -> None:
+    msg = message_store.peek()
+    if msg is None:
+        lang_name = "English" if config.HELMET_LANGUAGE == "en" else "Deutsch"
+        speak(t("no_messages_lang", lang_name=lang_name), config.HELMET_LANGUAGE_CODE)
+        return
+
+    sender_label = msg["sender_role"].capitalize()
+    preview = _preview_text(msg["text"], max_words=6)
+    speak(t("from_sender", sender=sender_label, preview=preview), config.HELMET_LANGUAGE_CODE)
+
+    my_lang  = config.HELMET_LANGUAGE
+    src_lang = msg["language"]
+    text     = msg["text"]
+
+    if src_lang == my_lang:
+        wav = text_to_speech(text, _lang_code(my_lang))
+    else:
+        translated = translate_text(text, src_lang, my_lang)
+        wav = text_to_speech(translated, _lang_code(my_lang))
+
+    play_audio_bytes(wav)
+    message_store.set_last_played(msg)
+    message_store.pop()
+
+    remaining = message_store.count()
+    if remaining > 0:
+        speak(t("n_messages_remaining", n=remaining), config.HELMET_LANGUAGE_CODE)
+    else:
+        led_handler.stop_pending_blink()
+        speak(t("no_more_messages"), config.HELMET_LANGUAGE_CODE)
+
+
+def _replay_last_message() -> None:
+    msg = message_store.get_last_played()
+    if msg is None:
+        speak(t("no_message_to_replay"), config.HELMET_LANGUAGE_CODE)
+        return
+
+    sender_label = msg["sender_role"].capitalize()
+    preview = _preview_text(msg["text"], max_words=6)
+    speak(t("replaying_from_sender", sender=sender_label, preview=preview),
+          config.HELMET_LANGUAGE_CODE)
+
+    my_lang  = config.HELMET_LANGUAGE
+    src_lang = msg["language"]
+    text     = msg["text"]
+
+    if src_lang == my_lang:
+        wav = text_to_speech(text, _lang_code(my_lang))
+    else:
+        translated = translate_text(text, src_lang, my_lang)
+        wav = text_to_speech(translated, _lang_code(my_lang))
+
+    play_audio_bytes(wav)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Button handler – PLAY message
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _handle_play_msg() -> None:
-    """Short press → play next message. Hold 3 s → voice language config."""
+
+    if _is_in_any_call():
+        return   # don't play messages during call
+    """
+    Double-tap (within 2s) → replay last played message.
+    Short press → play next message. 
+    Hold 3 s → voice language config.
+    """
+
+    if _is_double_tap(config.BTN_PLAY_MSG):
+        _replay_last_message()
+        gpio.wait_for_release(config.BTN_PLAY_MSG, max_seconds=2)
+        return
+    
     start = time.time()
     config_triggered = False
 
@@ -369,65 +439,35 @@ def _handle_play_msg() -> None:
         _play_next_message()
 
 
-def _play_next_message() -> None:
-    msg = message_store.peek()
-    if msg is None:
-        speak("No messages.", config.HELMET_LANGUAGE_CODE)
-        return
-
-    sender_label = msg["sender_role"].capitalize()
-    preview = _preview_text(msg["text"], max_words=6)
-    speak(f"From {sender_label}: {preview}", config.HELMET_LANGUAGE_CODE)
-
-    my_lang  = config.HELMET_LANGUAGE
-    src_lang = msg["language"]
-    text     = msg["text"]
-
-    if src_lang == my_lang:
-        wav = text_to_speech(text, _lang_code(my_lang))
-    else:
-        translated = translate_text(text, src_lang, my_lang)
-        wav = text_to_speech(translated, _lang_code(my_lang))
-
-    play_audio_bytes(wav)
-    message_store.pop()
-
-    remaining = message_store.count()
-    if remaining > 0:
-        speak(f"{remaining} message{'s' if remaining > 1 else ''} remaining.",
-              config.HELMET_LANGUAGE_CODE)
-    else:
-        led_handler.stop_pending_blink()
-        speak("No more messages.", config.HELMET_LANGUAGE_CODE)
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Button handler – Language configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _handle_language_config() -> None:
-    speak("Language setup. Say English or German.", config.HELMET_LANGUAGE_CODE)
+    speak(t("lang_setup_prompt"), config.HELMET_LANGUAGE_CODE)
+
     is_held = lambda: gpio.is_pressed(config.BTN_PLAY_MSG)
     audio = record_until_release(is_held, max_seconds=5.0)
 
     if not audio or len(audio) < config.CHUNK * 2:
-        speak("No input detected. Configuration cancelled.",
-              config.HELMET_LANGUAGE_CODE)
+        speak(t("no_input_cancelled"), config.HELMET_LANGUAGE_CODE)
         return
 
-    text, _ = transcribe_only(audio)
-    log.info("[LANG CFG] Heard: '%s'", text)
+    lang = ""
+    for hint in ("en", "de"):
+        text = voice_to_text(audio, language_code=hint)
+        log.info("[LANG CFG] Heard (hint=%s): '%s'", hint, text)
+        lang = parse_config_command(text)
+        if lang:
+            break
 
-    lang = parse_config_command(text)
     if not lang:
-        speak("Could not understand. Say English or German.",
-              config.HELMET_LANGUAGE_CODE)
+        speak(t("lang_not_understood"), config.HELMET_LANGUAGE_CODE)
         return
 
     save_language_setting(lang)
     apply_language_setting(lang)
-    speak("Configured for English." if lang == "en"
-          else "Konfiguriert für Deutsch.",
+    speak(t("configured_en") if lang == "en" else t("configured_de"),
           config.HELMET_LANGUAGE_CODE)
 
 
@@ -436,11 +476,30 @@ def _handle_language_config() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _handle_reminder() -> None:
+
+    if _is_in_any_call():
+        return   # don't play stored messages over live call audio
+
+    """Double-tap (within 2s) → replay last triggered reminder. Otherwise record a new one."""
+
+    if _is_double_tap(config.BTN_REMINDER):
+        replay_last_reminder()
+        gpio.wait_for_release(config.BTN_REMINDER, max_seconds=2)
+        return
+    
     is_held = lambda: gpio.is_pressed(config.BTN_REMINDER)
     record_and_save_reminder(is_held)
 
 
 def _handle_handover() -> None:
+    
+    """Double-tap (within 2s) → replay last handover. Otherwise normal play/record flow."""
+    
+    if _is_double_tap(config.BTN_HANDOVER):
+        replay_last_handover()
+        gpio.wait_for_release(config.BTN_HANDOVER, max_seconds=2)
+        return
+    
     is_held = lambda: gpio.is_pressed(config.BTN_HANDOVER)
     handle_handover_button(is_held)
 
@@ -450,9 +509,9 @@ def _handle_handover() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _start_manager_keyboard_hooks() -> None:
-    """Register F1/F2 call buttons and 1/2/3 PTT selection for manager."""
+    """Register F1/F2 call buttons and 1/2 PTT selection for manager."""
     if not gpio.HAS_KEYBOARD:
-        log.warning("[MAIN] keyboard lib unavailable – F1/F2 and 1/2/3 disabled.")
+        log.warning("[MAIN] keyboard lib unavailable – F1/F2 and 1/2 disabled.")
         return
     import keyboard as _kb
 
@@ -469,12 +528,12 @@ def _start_manager_keyboard_hooks() -> None:
             wid = _f_workers[k]
             threading.Thread(target=_handle_call_button, args=(wid,),
                              daemon=True, name=f"call-{wid}").start()
-        elif k in ("1", "2", "3"):
+        elif k in ("1", "2"):
             _select_worker(int(k))
 
     _kb.hook(_on_key)
     log.info("[MAIN] Manager keyboard: F1=call-w-01  F2=call-w-02  "
-             "1/2/3=PTT-select")
+             "1/2=PTT-select")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -489,7 +548,10 @@ def _button_monitor(pin: int, handler, name: str) -> None:
             handler()
         except Exception as exc:
             log.error("[MONITOR] Error in %s: %s", name, exc)
-        time.sleep(0.25)   # debounce
+            try:
+                speak(t("not_understood_retry"), config.HELMET_LANGUAGE_CODE)
+            except Exception:
+                pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -500,6 +562,8 @@ def main() -> None:
     # 1. Language
     lang = load_language_setting()
     apply_language_setting(lang)
+
+
 
     log.info("=" * 60)
     log.info("  Smart Helmet – Communication Module")
@@ -612,14 +676,14 @@ def main() -> None:
                   lambda: _handle_call_button("manager"), "CALL_MGR"),
             name="btn-call-mgr", daemon=True))
 
-    for t in monitors:
-        t.start()
+    for monitor_thread in monitors:
+        monitor_thread.start()
 
     # 9. Ready
     log.info("[MAIN] System ready.")
-    speak("Smart helmet ready.", config.HELMET_LANGUAGE_CODE)
+    speak(t("smart_helmet_ready"), config.HELMET_LANGUAGE_CODE)
     if config.HELMET_ROLE == "manager" and not gpio.IS_PI:
-        log.info("[MAIN] Keys: SPACE=PTT  1/2/3=select  F1/F2=call  "
+        log.info("[MAIN] Keys: SPACE=PTT  1/2=select  F1/F2=call  "
                  "p=play  r=reminder  h=handover")
     elif config.HELMET_ROLE == "worker" and not gpio.IS_PI:
         log.info("[MAIN] Keys: SPACE=PTT-mgr  w=PTT-peer  c=call-mgr  "

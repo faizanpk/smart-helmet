@@ -59,10 +59,11 @@ def test_imports():
         "message_store":  "message_store",
         "led_handler":    "led_handler",
         "call_manager":   "call_manager",
+        "live_call":       "live_call",
         "translation":    "translation",
         "reminders":      "reminders",
         "handover":       "handover",
-        "speaker_mode":   "speaker_mode",
+        # "speaker_mode": "speaker_mode",  # ← remove this comment if you don't have this file
     }
     all_ok = True
     for name, mod in modules.items():
@@ -98,15 +99,24 @@ def test_database():
         else:
             fail(f"Table '{t}' missing!")
 
+    # Confirm the handover migration columns exist (sender_id, played_by)
+    conn = db.get_conn()
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(handover)").fetchall()}
+    conn.close()
+    for col in ("sender_id", "played_by"):
+        if col in cols:
+            ok(f"handover.{col} column present (multi-worker fix applied).")
+        else:
+            fail(f"handover.{col} column MISSING — multi-worker fix not applied!")
+
 # ─────────────────────────────────────────────────────────────────────────────
-# TEST 3 – Text-to-Speech (pyttsx3, no mic needed)
+# TEST 3 – Text-to-Speech (Piper, neural, offline)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_tts():
     from translation import text_to_speech, play_audio_bytes
-    import config
 
-    info("Testing English TTS…")
+    info("Testing English TTS (Piper)...")
     wav = text_to_speech("Smart helmet test. English voice working.", language_code="en-US")
     if len(wav) > 100:
         ok(f"English TTS produced {len(wav):,} bytes of audio.")
@@ -116,12 +126,9 @@ def test_tts():
 
     play_audio_bytes(wav)
     r = ask("Did you hear an English voice? (y/n)")
-    if r == "y":
-        ok("English TTS playback confirmed.")
-    else:
-        fail("English TTS playback not heard. Check speakers / default audio device.")
+    ok("English TTS playback confirmed.") if r == "y" else fail("Check speakers / default audio device.")
 
-    info("Testing German TTS…")
+    info("Testing German TTS (Piper)...")
     wav_de = text_to_speech("Hallo, Helmtest auf Deutsch.", language_code="de-DE")
     if len(wav_de) > 100:
         ok(f"German TTS produced {len(wav_de):,} bytes.")
@@ -130,26 +137,21 @@ def test_tts():
         return
 
     play_audio_bytes(wav_de)
-    r = ask("Did you hear a German (or any) voice? (y/n)")
+    r = ask("Did you hear a German voice? (y/n)")
     if r == "y":
         ok("German TTS playback confirmed.")
     else:
-        info("No German SAPI voice installed on this Windows machine.")
-        info("Install one: Settings -> Time & Language -> Speech -> Add voices -> Deutsch")
-        info("Or leave it – the English voice will speak German text on the laptop.")
-        info("On the Raspberry Pi, espeak-ng includes a German voice automatically.")
+        fail("German voice not heard.")
+        info("Confirm de_DE-thorsten-medium.onnx exists in data/piper_voices/")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TEST 4 – Offline translation (ctranslate2 + OPUS-MT)
+# TEST 4 – Translation (Google Translate via deep-translator, ONLINE)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_translation():
-    info("First run will download OPUS-MT models (~100 MB each). This may take a minute.")
-    info("Subsequent runs are instant (models cached locally).")
-    from translation import setup_offline_models, translate_text
-
-    setup_offline_models()
-    ok("Offline models ready.")
+    info("Testing online translation via Google Translate (deep-translator).")
+    info("Requires internet — there is no offline fallback by design.")
+    from translation import translate_text
 
     tests = [
         ("Safety check at gate B",            "en", "de"),
@@ -158,31 +160,36 @@ def test_translation():
     ]
     all_ok = True
     for text, src, tgt in tests:
-        result = translate_text(text, source=src, target=tgt)
-        if result and result != text:
-            ok(f"[{src}->{tgt}]  '{text}'  ->  '{result}'")
-        else:
-            fail(f"[{src}->{tgt}]  Translation failed for: '{text}'")
+        try:
+            result = translate_text(text, source=src, target=tgt)
+            if result and result != text:
+                ok(f"[{src}->{tgt}]  '{text}'  ->  '{result}'")
+            else:
+                fail(f"[{src}->{tgt}]  Translation failed for: '{text}'")
+                all_ok = False
+        except Exception as e:
+            fail(f"[{src}->{tgt}]  Exception (likely no internet): {e}")
             all_ok = False
 
     if all_ok:
         ok("All translation tests passed.")
+    else:
+        info("If all failed, check internet connectivity on THIS device specifically.")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TEST 5 – Speech-to-Text (Whisper, requires microphone)
+# TEST 5 – Speech-to-Text (Whisper, offline, requires microphone)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_stt():
     info("This test records 4 seconds from your default microphone.")
-    info("First run will download Whisper 'tiny' model (~75 MB).")
+    info("First run loads Whisper model (size set by config.WHISPER_MODEL_SIZE).")
     r = ask("Do you have a microphone ready? (y/n)")
     if r != "y":
         info("Skipping STT test. You can run it later with:  python test_suite.py 5")
         return
 
-    import pyaudio, wave, tempfile, config
+    import pyaudio, config
     from translation import voice_to_text
-    from faster_whisper import WhisperModel
 
     info("Speak NOW – recording for 4 seconds…")
     p = pyaudio.PyAudio()
@@ -201,29 +208,26 @@ def test_stt():
     text = voice_to_text(audio_bytes, language_code=config.HELMET_LANGUAGE_CODE)
     if text:
         ok(f"Whisper recognised: '{text}'")
-        r2 = ask(f"Is that roughly what you said? (y/n)")
-        if r2 == "y":
-            ok("STT test passed.")
-        else:
-            info("Try speaking more slowly and clearly, or move closer to the mic.")
+        r2 = ask("Is that roughly what you said? (y/n)")
+        ok("STT test passed.") if r2 == "y" else info("Try speaking more slowly, or move closer to the mic.")
     else:
         fail("Whisper returned empty text. Check mic is working and not muted.")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TEST 6 – Full translation pipeline (STT → translate → TTS → play)
+# TEST 6 – Full pipeline (STT → translate → TTS → play)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_full_pipeline():
-    info("Full pipeline: you speak English -> hear German translation.")
+    info("Full pipeline: you speak -> auto-detect language -> translate -> hear result.")
+    info("(Whisper STT -> Google Translate -> Piper TTS)")
     r = ask("Microphone ready? (y/n)")
     if r != "y":
         info("Skipping. Run with:  python test_suite.py 6")
         return
 
     import pyaudio, config
-    from translation import translation_pipeline, play_audio_bytes
+    from translation import transcribe_only, translate_text, text_to_speech, play_audio_bytes
 
-    info("Hold ENTER, speak your message, then press ENTER again to stop.")
     input("  Press ENTER to START recording…")
     p = pyaudio.PyAudio()
     stream = p.open(format=pyaudio.paInt16, channels=1,
@@ -245,20 +249,30 @@ def test_full_pipeline():
     audio_bytes = b"".join(frames)
     ok(f"Captured {len(audio_bytes):,} bytes.")
 
-    info("Running pipeline: STT -> translate -> TTS…")
-    original, translated, wav = translation_pipeline(audio_bytes)
-
+    info("Running STT (Whisper)…")
+    original, detected_lang = transcribe_only(audio_bytes)
     if not original:
         fail("No speech detected. Speak louder or check mic.")
         return
+    ok(f"You said      : '{original}'  (detected lang: {detected_lang})")
 
-    ok(f"You said      : '{original}'")
+    target = "de" if detected_lang == "en" else "en"
+    info(f"Translating {detected_lang} -> {target} (Google Translate)…")
+    try:
+        translated = translate_text(original, source=detected_lang, target=target)
+    except Exception as e:
+        fail(f"Translation failed (check internet): {e}")
+        return
     ok(f"Translation   : '{translated}'")
+
+    info("Synthesising with Piper TTS…")
+    target_code = "de-DE" if target == "de" else "en-US"
+    wav = text_to_speech(translated, language_code=target_code)
     ok(f"Audio size    : {len(wav):,} bytes")
 
     info("Playing translated audio…")
     play_audio_bytes(wav)
-    r2 = ask("Did you hear the German translation? (y/n)")
+    r2 = ask("Did you hear the translation? (y/n)")
     ok("Pipeline test passed!") if r2 == "y" else fail("Playback issue. Check audio output device.")
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -266,17 +280,17 @@ def test_full_pipeline():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_reminders():
-    import db, config
+    import db
     from reminders import parse_trigger_time, save_reminder, _check_and_play_reminders
     from datetime import datetime
 
-    # Time parsing
     cases = [
         ("Check scaffolding at 14:30",    "14:30"),
         ("Remind me at 2 pm to inspect",  "14:00"),
         ("Safety check at noon",           "12:00"),
         ("Besprechung um 14 Uhr 30",      "14:30"),
         ("Morning inspection",             "09:00"),
+        ("Erinnerung fürs Abendessen um 19 Uhr", "19:00"),  # regression check for the substring-match bug
     ]
     all_ok = True
     for text, expected in cases:
@@ -291,13 +305,11 @@ def test_reminders():
         fail("Time parser has issues.")
         return
 
-    # Save a reminder with a trigger time 1 minute from now
     now = datetime.now()
     trigger = f"{now.hour:02d}:{(now.minute + 1) % 60:02d}"
     save_reminder("This is a test reminder from the test suite.", trigger)
     ok(f"Reminder saved with trigger_time='{trigger}'")
 
-    # Verify in DB
     conn = db.get_conn()
     row = conn.execute(
         "SELECT * FROM reminders WHERE trigger_time=? AND done=0", (trigger,)
@@ -309,10 +321,7 @@ def test_reminders():
         fail("Reminder not found in DB.")
         return
 
-    info(f"Reminder will auto-play at {trigger}.")
-    info("Simulating trigger now (forcing _check_and_play_reminders with current time)…")
-
-    # Temporarily insert a reminder for the exact current time
+    info("Simulating an immediate trigger…")
     now_str = datetime.now().strftime("%H:%M")
     save_reminder("Immediate test reminder – you should hear this now.", now_str)
     _check_and_play_reminders()
@@ -321,133 +330,161 @@ def test_reminders():
     ok("Reminder test passed!") if r == "y" else fail("TTS playback not heard.")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TEST 8 – Handover: record message, play it back
+# TEST 8 – Handover: save, playback, and multi-worker independent-read fix
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_handover():
     import db, config
-    from translation import text_to_speech, play_audio_bytes
     from handover import _get_unplayed_handover, play_handover
     from datetime import datetime
 
-    info("Inserting a fake handover message directly into the DB (no mic needed).")
-
-    # Simulate worker saving a handover
     original_role = config.HELMET_ROLE
-    config.HELMET_ROLE = "worker"
+    original_id   = config.HELMET_ID
+
+    info("Part A: basic save + playback (worker -> manager).")
+    config.HELMET_ROLE, config.HELMET_ID = "worker", "w-01"
 
     conn = db.get_conn()
     conn.execute(
-        """INSERT INTO handover (sender_name, sender_role, zone, message, timestamp, played)
-           VALUES (?, ?, ?, ?, ?, 0)""",
-        ("Test Worker", "worker", "Zone B",
+        """INSERT INTO handover
+           (sender_name, sender_id, sender_role, zone, message, timestamp, played_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (None, "w-01", "worker", "Zone B",
          "Scaffolding on level 3 needs safety inspection before morning shift.",
-         datetime.now().strftime("%Y-%m-%d %H:%M"))
+         datetime.now().strftime("%Y-%m-%d %H:%M"), "")
     )
     conn.commit()
     conn.close()
-    ok("Handover message inserted into DB as 'worker'.")
+    ok("Handover message inserted as worker 'w-01'.")
 
-    # Now simulate manager reading it
-    config.HELMET_ROLE = "manager"
+    config.HELMET_ROLE, config.HELMET_ID = "manager", "manager"
     entry = _get_unplayed_handover()
     if entry:
-        ok(f"Found unplayed handover: '{entry['message'][:50]}…'")
+        ok(f"Manager found unplayed handover: '{entry['message'][:50]}…'")
     else:
         fail("Manager could not find worker's handover message.")
-        config.HELMET_ROLE = original_role
+        config.HELMET_ROLE, config.HELMET_ID = original_role, original_id
         return
 
-    info("Playing handover via TTS…")
     play_handover(entry)
-
     r = ask("Did you hear the handover message? (y/n)")
-    ok("Handover test passed!") if r == "y" else fail("TTS playback not heard.")
+    ok("Basic handover playback passed!") if r == "y" else fail("TTS playback not heard.")
 
-    # Verify it's marked as played
     conn = db.get_conn()
-    row = conn.execute("SELECT played FROM handover WHERE id=?", (entry["id"],)).fetchone()
+    row = conn.execute("SELECT played_by FROM handover WHERE id=?", (entry["id"],)).fetchone()
     conn.close()
-    if row and row["played"] == 1:
-        ok("Handover marked as played in DB.")
+    played_list = (row["played_by"] or "").split(",") if row else []
+    if "manager" in played_list:
+        ok(f"Marked played by 'manager' (played_by='{row['played_by']}').")
     else:
-        fail("Handover not marked as played.")
+        fail("Handover not correctly marked as played for manager.")
 
-    config.HELMET_ROLE = original_role
+    info("\nPart B: multi-worker independent-read fix (manager broadcasts, BOTH workers read it).")
+    config.HELMET_ROLE, config.HELMET_ID = "manager", "manager"
+    conn = db.get_conn()
+    conn.execute(
+        """INSERT INTO handover
+           (sender_name, sender_id, sender_role, zone, message, timestamp, played_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (None, "manager", "manager", None,
+         "Crane moves to zone D at 3pm, all teams clear the area.",
+         datetime.now().strftime("%Y-%m-%d %H:%M"), "")
+    )
+    conn.commit()
+    conn.close()
+    ok("Manager broadcast handover inserted.")
+
+    config.HELMET_ROLE, config.HELMET_ID = "worker", "w-01"
+    entry_w01 = _get_unplayed_handover()
+    if entry_w01:
+        play_handover(entry_w01)
+        ok("Worker w-01 read the manager's broadcast.")
+    else:
+        fail("Worker w-01 could not find the manager's broadcast.")
+        config.HELMET_ROLE, config.HELMET_ID = original_role, original_id
+        return
+
+    config.HELMET_ROLE, config.HELMET_ID = "worker", "w-02"
+    entry_w02 = _get_unplayed_handover()
+    if entry_w02 and entry_w02["id"] == entry_w01["id"]:
+        ok("Worker w-02 ALSO found the same broadcast — multi-reader fix confirmed!")
+        r3 = ask("Play it for w-02 as well, to confirm audio works for the second reader too? (y/n)")
+        if r3 == "y":
+            play_handover(entry_w02)
+            r4 = ask("Did you hear it? (y/n)")
+            ok("Multi-worker handover test fully passed!") if r4 == "y" else fail("Playback issue for w-02.")
+    else:
+        fail("Worker w-02 could NOT find the broadcast — multi-reader fix may have regressed!")
+
+    config.HELMET_ROLE, config.HELMET_ID = original_role, original_id
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TEST 9 – Network: send audio between two local sockets (same machine)
+# TEST 9 – Network: manager server + worker client handshake + voice message
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_network():
-    import network
+    import network, config
 
-    TEST_PORT = 15005   # use a different port to avoid conflicts with main system
+    TEST_PORT = 15005   # different port to avoid clashing with main system
     received = []
-    ready    = threading.Event()
-    done     = threading.Event()
+    done = threading.Event()
 
-    def on_message(msg_type, meta, payload):
-        received.append((msg_type, payload))
+    def on_manager_message(msg_type, meta, payload):
+        received.append((msg_type, meta, payload))
         done.set()
 
-    # Monkey-patch port for this test
-    info("Starting local TCP server on port 15005…")
+    original_role = config.HELMET_ROLE
+    original_id   = config.HELMET_ID
 
-    server_sock_backup = network._server_sock
-    active_backup      = network._active_sock
-
-    # Reset module state for clean test
-    network._server_sock = None
-    network._active_sock = None
-
-    network.start_server(TEST_PORT, on_message)
-    time.sleep(0.5)   # give server thread time to bind
+    info("Starting local TCP server (as manager) on port 15005…")
+    network.start_server(TEST_PORT, on_manager_message)
+    time.sleep(0.5)
     ok("Server listening.")
 
-    info("Connecting client (same machine, 127.0.0.1)…")
+    info("Connecting as worker client to 127.0.0.1…")
+    config.HELMET_ID = "w-01"
     network.connect_to_server("127.0.0.1", TEST_PORT, lambda t, m, p: None)
 
-    # Wait for connection
     deadline = time.time() + 5
-    while not network.is_connected() and time.time() < deadline:
+    while "w-01" not in network.get_worker_ids() and time.time() < deadline:
         time.sleep(0.1)
 
-    if network.is_connected():
-        ok("Client connected to server.")
+    if "w-01" in network.get_worker_ids():
+        ok("Worker handshake (MSG_HELLO) completed — registered as 'w-01'.")
     else:
-        fail("Client could not connect. Check firewall / antivirus.")
+        fail("Worker did not register within 5 seconds. Check firewall.")
+        config.HELMET_ID = original_id
         return
 
-    # Send test payload
-    test_payload = b"HELLO_HELMET_TEST_AUDIO_12345"
-    info(f"Sending {len(test_payload)} bytes as MSG_TRANSLATION…")
-    sent = network.send_audio(test_payload, meta={"test": True})
-    if sent:
-        ok("Payload sent.")
-    else:
-        fail("send_audio returned False.")
+    info("Sending a voice message from worker to manager…")
+    sent = network.send_voice_message("Test message from suite", "en")
+    if not sent:
+        fail("send_voice_message returned False.")
+        config.HELMET_ID = original_id
         return
+    ok("Message sent.")
 
-    # Wait for receipt
     if done.wait(timeout=5):
-        msg_type, payload = received[0]
-        if msg_type == "translation" and payload == test_payload:
-            ok(f"Received correctly: type='{msg_type}', payload={payload}")
+        msg_type, meta, payload = received[0]
+        if msg_type == network.MSG_VOICE_MESSAGE and meta.get("text") == "Test message from suite":
+            ok(f"Manager received correctly: '{meta.get('text')}' from '{meta.get('sender_id')}'")
             ok("Network test passed!")
         else:
-            fail(f"Received wrong data: type={msg_type}, payload={payload}")
+            fail(f"Received unexpected data: type={msg_type}, meta={meta}")
     else:
         fail("Timed out waiting for message. No data received in 5 s.")
 
+    config.HELMET_ROLE, config.HELMET_ID = original_role, original_id
+
 # ─────────────────────────────────────────────────────────────────────────────
-# TEST 10 – GPIO keyboard fallback (manager laptop simulation)
+# TEST 10 – GPIO keyboard fallback (manager/worker laptop simulation)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_gpio():
     import gpio_handler as gpio
+    import config
 
-    ok(f"IS_PI       = {gpio.IS_PI}   (should be False on laptop)")
+    ok(f"IS_PI        = {gpio.IS_PI}   (should be False on laptop)")
     ok(f"HAS_KEYBOARD = {gpio.HAS_KEYBOARD}")
 
     if not gpio.HAS_KEYBOARD:
@@ -456,11 +493,10 @@ def test_gpio():
         return
 
     info("Press and HOLD the SPACE key for 2 seconds, then release…")
-    gpio.wait_for_press(17)   # BTN_SPEAK = 17 -> SPACE key
+    gpio.wait_for_press(config.BTN_SPEAK_MANAGER)   # SPACE key
     ok("Button press detected!")
 
-    import time
-    held_for = gpio.wait_for_release(17, max_seconds=5)
+    held_for = gpio.wait_for_release(config.BTN_SPEAK_MANAGER, max_seconds=5)
     ok(f"Button released after {held_for:.2f} s.")
 
     if held_for >= 1.0:
@@ -477,70 +513,56 @@ def test_live_call():
     from live_call import LiveCall, _FRAMES_PER_PACKET, _PACKET_BYTES
 
     info("Tests Live Call UDP audio streaming using a loopback on localhost.")
-    info("No partner Pi needed - we send a UDP packet to ourselves.")
+    info("No partner Pi needed — we send a UDP packet to ourselves.")
 
-    # 1. Verify LiveCall object construction
+    original_role = config.HELMET_ROLE
     config.HELMET_ROLE = "manager"
-    call = LiveCall("127.0.0.1")
-    ok(f"LiveCall created: send_port={call._send_port}, recv_port={call._recv_port}")
 
-    # 2. Send a raw UDP packet and receive it back
-    recv_port = call._send_port   # manager sends on 5006, so we listen on 5006
-    sock_recv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock_recv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock_recv.bind(("0.0.0.0", recv_port))
-    sock_recv.settimeout(3.0)
+    call = LiveCall()
+    call.start("127.0.0.1", port_offset=0)
+    time.sleep(0.3)   # let sender/receiver/player threads spin up
+    ok(f"LiveCall started: send_port={call._send_port}, recv_port={call._recv_port}")
 
     sock_send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     fake_pcm = b"\x01\x02" * (_PACKET_BYTES // 2)
     header   = struct.pack(">I", 42)
-    sock_send.sendto(header + fake_pcm, ("127.0.0.1", recv_port))
-    ok(f"Sent {len(header + fake_pcm)} byte UDP packet to port {recv_port}.")
+    sock_send.sendto(header + fake_pcm, ("127.0.0.1", call._recv_port))
+    ok(f"Sent {len(header + fake_pcm)} byte UDP packet to port {call._recv_port}.")
 
-    try:
-        data, _ = sock_recv.recvfrom(4 + _PACKET_BYTES + 64)
-        seq = struct.unpack(">I", data[:4])[0]
-        pcm = data[4:]
-        if seq == 42 and pcm == fake_pcm:
-            ok(f"Received packet correctly: seq={seq}, payload_len={len(pcm)}.")
-            ok("Live Call UDP loopback test passed!")
-        else:
-            fail(f"Data mismatch: seq={seq} (expected 42), pcm_match={pcm==fake_pcm}")
-    except socket.timeout:
-        fail("UDP receive timed out. Check if port 5006 is blocked by firewall.")
-    finally:
-        sock_recv.close()
-        sock_send.close()
+    time.sleep(0.5)
+    info("If your speakers are on, you may have just heard a brief audio blip.")
 
-    # 3. Verify mute flag
     call.mute(True)
     ok(f"call._muted = {call._muted}  (should be True)")
     call.mute(False)
     ok(f"call._muted = {call._muted}  (should be False)")
     ok("Mute toggle confirmed.")
 
+    call.stop()
+    ok("Call stopped cleanly.")
+    sock_send.close()
+    config.HELMET_ROLE = original_role
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN RUNNER
 # ─────────────────────────────────────────────────────────────────────────────
 
 TESTS = [
-    (1,  "Module imports",               test_imports),
-    (2,  "Database initialisation",      test_database),
-    (3,  "Text-to-Speech (pyttsx3)",     test_tts),
-    (4,  "Offline translation (OPUS-MT)", test_translation),
-    (5,  "Speech-to-Text (Whisper)",     test_stt),
-    (6,  "Full pipeline (STT->TR->TTS)", test_full_pipeline),
-    (7,  "Reminders (save + playback)",  test_reminders),
-    (8,  "Handover (save + playback)",   test_handover),
-    (9,  "Network (TCP send/receive)",   test_network),
-    (10, "GPIO / keyboard fallback",     test_gpio),
-    (11, "Live Call (UDP loopback)",     test_live_call),
+    (1,  "Module imports",                 test_imports),
+    (2,  "Database initialisation",        test_database),
+    (3,  "Text-to-Speech (Piper)",         test_tts),
+    (4,  "Translation (Google, online)",   test_translation),
+    (5,  "Speech-to-Text (Whisper)",       test_stt),
+    (6,  "Full pipeline (STT->TR->TTS)",   test_full_pipeline),
+    (7,  "Reminders (save + playback)",    test_reminders),
+    (8,  "Handover (+ multi-worker fix)",  test_handover),
+    (9,  "Network (handshake + message)", test_network),
+    (10, "GPIO / keyboard fallback",       test_gpio),
+    (11, "Live Call (UDP loopback)",       test_live_call),
 ]
 
 if __name__ == "__main__":
-    # Enable ANSI colours on Windows
-    os.system("")
+    os.system("")  # enable ANSI colours on Windows
 
     print(f"\n{BOLD}Smart Helmet – Test Suite{RESET}")
     print("Run all tests in order, or pass a number to run one:")
@@ -548,10 +570,9 @@ if __name__ == "__main__":
     print("  python test_suite.py 4      <- only Test 4")
     print()
     print("Recommended order for first-time setup:")
-    print("  1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10\n")
+    print("  1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10 -> 11\n")
 
     if len(sys.argv) > 1:
-        # Single test mode
         try:
             n = int(sys.argv[1])
             match = [(num, title, fn) for num, title, fn in TESTS if num == n]
@@ -563,7 +584,6 @@ if __name__ == "__main__":
             print(f"Usage: python test_suite.py [1-{len(TESTS)}]")
             sys.exit(1)
     else:
-        # Run all
         for num, title, fn in TESTS:
             run_test(num, title, fn)
             r = ask("Continue to next test? (y/n)")

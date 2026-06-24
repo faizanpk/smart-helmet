@@ -29,7 +29,7 @@ from typing import Optional, Callable
 
 import config
 import led_handler
-from translation import speak, play_alert_beep
+from translation import speak, play_alert_beep, t
 
 log = logging.getLogger(__name__)
 
@@ -121,9 +121,8 @@ class CallSlot:
         threading.Thread(target=play_alert_beep, args=(3,),
                          daemon=True, name="call-beep").start()
         led_handler.blink_alert(times=10, interval=0.1)
-        speak(f"Incoming call from {self.partner_label}. "
-              f"Press call button to answer.",
-              config.HELMET_LANGUAGE_CODE)
+        speak(t("incoming_call", partner=self.partner_label), config.HELMET_LANGUAGE_CODE)
+
 
         # Start ring timeout
         self._ring_timer = threading.Timer(RING_TIMEOUT, self._ring_timeout)
@@ -140,7 +139,7 @@ class CallSlot:
         self._cancel_ring_timer()
         log.info("[CALL] Call accepted by %s – starting audio.", self.slot_id)
         self._start_audio()
-        speak("Call connected.", config.HELMET_LANGUAGE_CODE)
+        speak(t("call_connected"), config.HELMET_LANGUAGE_CODE)
 
     def on_call_ended(self) -> None:
         """Partner hung up."""
@@ -151,11 +150,11 @@ class CallSlot:
         self._cancel_ring_timer()
         if prev == CallState.IN_CALL:
             self._stop_audio()
-            speak("Call ended.", config.HELMET_LANGUAGE_CODE)
+            speak(t("call_ended"), config.HELMET_LANGUAGE_CODE)
         elif prev == CallState.CALLING:
-            speak("Call not answered.", config.HELMET_LANGUAGE_CODE)
+            speak(t("call_not_answered"), config.HELMET_LANGUAGE_CODE)
         elif prev == CallState.INCOMING:
-            speak("Missed call.", config.HELMET_LANGUAGE_CODE)
+            speak(t("missed_call"), config.HELMET_LANGUAGE_CODE)
         log.info("[CALL] Slot %s returned to IDLE.", self.slot_id)
 
     # ─── Internal actions ─────────────────────────────────────────────────────
@@ -164,15 +163,22 @@ class CallSlot:
         with self._lock:
             self._state = CallState.CALLING
         log.info("[CALL] Calling %s…", self.slot_id)
-        self._send_request(self.slot_id)
-        speak(f"Calling {self.partner_label}.", config.HELMET_LANGUAGE_CODE)
+        sent = self._send_request(self.slot_id)
+
+        if not sent:
+            with self._lock:
+                self._state = CallState.IDLE   # roll back — never actually entered CALLING
+            speak(t("no_workers_connected"), config.HELMET_LANGUAGE_CODE)
+            log.warning("[CALL] Call request to %s failed — worker not connected.", self.slot_id)
+            return
+    
+        speak(t("calling_partner", partner=self.partner_label), config.HELMET_LANGUAGE_CODE)
 
     def _cancel(self) -> None:
         with self._lock:
             self._state = CallState.IDLE
         self._send_end(self.slot_id)
-        speak("Call cancelled.", config.HELMET_LANGUAGE_CODE)
-        log.info("[CALL] Outgoing call to %s cancelled.", self.slot_id)
+        speak(t("call_cancelled"), config.HELMET_LANGUAGE_CODE)
 
     def _answer(self) -> None:
         with self._lock:
@@ -181,7 +187,7 @@ class CallSlot:
         self._send_accept(self.slot_id)
         log.info("[CALL] Answered call from %s.", self.slot_id)
         self._start_audio()
-        speak("Call connected.", config.HELMET_LANGUAGE_CODE)
+        speak(t("call_connected"), config.HELMET_LANGUAGE_CODE)
 
     def _hangup(self, local: bool = True) -> None:
         with self._lock:
@@ -189,7 +195,7 @@ class CallSlot:
         self._stop_audio()
         if local:
             self._send_end(self.slot_id)
-        speak("Call ended.", config.HELMET_LANGUAGE_CODE)
+        speak(t("call_ended"), config.HELMET_LANGUAGE_CODE)
         log.info("[CALL] Hung up on %s.", self.slot_id)
 
     def _ring_timeout(self) -> None:
@@ -198,7 +204,7 @@ class CallSlot:
                 return
             self._state = CallState.IDLE
         self._send_end(self.slot_id)
-        speak("Missed call.", config.HELMET_LANGUAGE_CODE)
+        speak(t("missed_call"), config.HELMET_LANGUAGE_CODE)
         log.info("[CALL] Ring timeout – %s not answered.", self.slot_id)
 
     def _cancel_ring_timer(self) -> None:

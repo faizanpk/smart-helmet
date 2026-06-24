@@ -70,3 +70,19 @@ def clear() -> None:
     with _lock:
         _queue.clear()
     log.info("[MSG] Queue cleared.")
+
+_last_played: Optional[Dict] = None
+_last_played_lock = threading.Lock()
+
+
+def set_last_played(msg: Dict) -> None:
+    """Cache the most recently played message for replay via double-tap."""
+    global _last_played
+    with _last_played_lock:
+        _last_played = dict(msg)
+
+
+def get_last_played() -> Optional[Dict]:
+    """Return the last played message, or None if nothing has been played yet."""
+    with _last_played_lock:
+        return dict(_last_played) if _last_played else None

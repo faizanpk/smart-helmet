@@ -29,6 +29,159 @@ import config
 
 log = logging.getLogger(__name__)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# BILINGUAL SYSTEM PROMPTS
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PROMPTS = {
+    # General
+    "no_workers_connected":  {"en": "No workers connected.",
+                              "de": "Keine Arbeiter verbunden."},
+    "only_n_workers":        {"en": "Worker {n} is not connected.",
+                              "de": "Arbeiter {n} ist nicht verbunden."},
+    "talking_to_worker":     {"en": "Talking to worker {index}.",
+                              "de": "Verbunden mit Arbeiter {index}."},
+    "n_messages_received":   {"en": "{n} message{plural} received. Press P to play.",
+                              "de": "{n} Nachricht{plural_de} empfangen. Drücken Sie P zum Abspielen."},
+    "worker_connected":      {"en": "Worker {n} connected. Press F{n} to call, or {n} to send a message.",
+                              "de": "Arbeiter {n} verbunden. Drücken Sie F{n} zum Anrufen, oder {n} für eine Nachricht."},
+    "worker_disconnected":   {"en": "A worker disconnected.",
+                              "de": "Ein Arbeiter hat die Verbindung getrennt."},
+    "smart_helmet_ready":    {"en": "Smart helmet ready.",
+                              "de": "Smarter Helm ist bereit."},
+
+    # PTT / Recording
+    "recording":             {"en": "Recording.",
+                              "de": "Aufnahme läuft."},
+    "too_short_hold":        {"en": "Too short. Hold while speaking.",
+                              "de": "Zu kurz. Halten Sie die Taste beim Sprechen."},
+    "processing":            {"en": "Processing.",
+                              "de": "Verarbeitung läuft."},
+    "not_understood_retry":  {"en": "Could not understand. Please try again.",
+                              "de": "Nicht verstanden. Bitte erneut versuchen."},
+    "message_sent":          {"en": "Message sent.",
+                              "de": "Nachricht gesendet."},
+    "partner_unreachable":   {"en": "Partner not reachable.",
+                              "de": "Partner nicht erreichbar."},
+    "no_worker_selected":    {"en": "No worker selected. Press 1, 2.",
+                              "de": "Kein Arbeiter ausgewählt. Drücken Sie 1, 2."},
+
+    # Mute
+    "muted":                 {"en": "Muted.", "de": "Stummgeschaltet."},
+    "unmuted":                {"en": "Unmuted.", "de": "Stummschaltung aufgehoben."},
+    "already_in_call":       {"en": "Already in a call.",
+                              "de": "Bereits in einem Anruf."},
+
+    # Play message
+    "no_messages":           {"en": "No messages.", "de": "Keine Nachrichten."},
+    "no_messages_lang":      {"en": "No messages. Currently set to {lang_name}.",
+                              "de": "Keine Nachrichten. Aktuell eingestellt auf {lang_name}."},
+    "from_sender":           {"en": "From {sender}: {preview}",
+                              "de": "Von {sender}: {preview}"},
+    "n_messages_remaining":  {"en": "{n} message{plural} remaining.",
+                              "de": "{n} Nachricht{plural_de} verbleibend."},
+    "no_more_messages":      {"en": "No more messages.",
+                              "de": "Keine weiteren Nachrichten."},
+
+    # Language config
+    "lang_setup_prompt":     {"en": "Language setup. Say English or German.",
+                              "de": "Spracheinrichtung. Sagen Sie English oder Deutsch."},
+    "lang_setup_prompt_de":  {"en": "Language setup, say in German too.",
+                              "de": "Sprachauswahl. Sagen Sie Englisch oder Deutsch."},
+    "no_input_cancelled":    {"en": "No input detected. Configuration cancelled.",
+                              "de": "Keine Eingabe erkannt. Konfiguration abgebrochen."},
+    "lang_not_understood":   {"en": "Could not understand. Say English or German.",
+                              "de": "Nicht verstanden. Sagen Sie English oder Deutsch."},
+    "configured_en":         {"en": "Configured for English.", "de": "Configured for English."},
+    "configured_de":         {"en": "Konfiguriert für Deutsch.", "de": "Konfiguriert für Deutsch."},
+
+    # Calls
+    "incoming_call":         {"en": "Incoming call from {partner}. Press call button to answer.",
+                              "de": "Eingehender Anruf von {partner}. Drücken Sie die Anruftaste zum Annehmen."},
+    "call_connected":        {"en": "Call connected.", "de": "Anruf verbunden."},
+    "call_ended":            {"en": "Call ended.", "de": "Anruf beendet."},
+    "call_not_answered":     {"en": "Call not answered.", "de": "Anruf nicht beantwortet."},
+    "missed_call":           {"en": "Missed call.", "de": "Verpasster Anruf."},
+    "calling_partner":       {"en": "Calling {partner}.", "de": "Rufe {partner} an."},
+    "call_cancelled":        {"en": "Call cancelled.", "de": "Anruf abgebrochen."},
+
+    # Handover
+    "handover_playing":      {"en": "Playing handover message.",
+                              "de": "Übergabenachricht wird abgespielt."},
+    "handover_end":          {"en": "End of handover message.",
+                              "de": "Ende der Übergabenachricht."},
+    "handover_prompt":       {"en": "Hold the button and record your handover. "
+                                      "Say your name, zone, and your message.",
+                              "de": "Halten Sie die Taste und nehmen Sie Ihre Übergabe auf. "
+                                      "Nennen Sie Ihren Namen, Ihre Zone und Ihre Nachricht."},
+    "handover_too_short":    {"en": "Recording too short. Handover not saved.",
+                              "de": "Aufnahme zu kurz. Übergabe nicht gespeichert."},
+    "handover_processing":   {"en": "Processing handover.",
+                              "de": "Übergabe wird verarbeitet."},
+    "handover_not_understood":{"en": "Could not understand. Handover not saved.",
+                              "de": "Nicht verstanden. Übergabe nicht gespeichert."},
+    "handover_saved":        {"en": "Handover message saved.",
+                              "de": "Übergabenachricht gespeichert."},
+
+    # Reminders
+    "reminder_prompt":       {"en": "Hold the button and record your reminder.",
+                              "de": "Halten Sie die Taste und nehmen Sie Ihre Erinnerung auf."},
+    "reminder_too_short":    {"en": "Recording too short. Please try again.",
+                              "de": "Aufnahme zu kurz. Bitte erneut versuchen."},
+    "reminder_processing":   {"en": "Processing reminder.",
+                              "de": "Erinnerung wird verarbeitet."},
+    "reminder_no_time":      {"en": "No time found in your message. Please include a "
+                                      "time, for example: at 14 30.",
+                              "de": "Keine Uhrzeit erkannt. Bitte geben Sie eine Uhrzeit "
+                                      "an, zum Beispiel: 14 Uhr 30."},
+    "reminder_saved":        {"en": "Reminder saved for {time}.",
+                              "de": "Erinnerung gespeichert für {time}."},
+    "reminder_label":        {"en": "Reminder:", "de": "Erinnerung:"},
+
+    "no_message_to_replay":  {"en": "No message to replay.",
+                          "de": "Keine Nachricht zum Wiederholen."},
+
+    "replaying_from_sender": {"en": "Replaying. From {sender}: {preview}",
+                            "de": "Wiederholung. Von {sender}: {preview}"},
+
+    "no_handover_to_replay": {"en": "No handover to replay.",
+                            "de": "Keine Übergabe zum Wiederholen."},
+
+    "handover_replaying":    {"en": "Replaying handover message.",
+                            "de": "Übergabenachricht wird wiederholt."},
+                            
+    "no_reminder_to_replay": {"en": "No reminder to replay.",
+                            "de": "Keine Erinnerung zum Wiederholen."},
+}
+
+
+def t(prompt_id: str, **kwargs) -> str:
+    """
+    Look up a system prompt in the CURRENT helmet language and format it
+    with any provided kwargs (e.g. t("talking_to_worker", index=2)).
+    Falls back to English if the prompt ID or language entry is missing.
+    """
+    entry = _PROMPTS.get(prompt_id)
+    if entry is None:
+        log.warning("[PROMPTS] Unknown prompt_id '%s'", prompt_id)
+        return prompt_id
+
+    lang = getattr(config, "HELMET_LANGUAGE", "en")
+    template = entry.get(lang, entry.get("en", prompt_id))
+
+    if kwargs:
+        # Auto-supply English/German plural helpers if "n" was passed
+        if "n" in kwargs and "plural" not in kwargs:
+            kwargs["plural"] = "s" if kwargs["n"] != 1 else ""
+        if "n" in kwargs and "plural_de" not in kwargs:
+            kwargs["plural_de"] = "en" if kwargs["n"] != 1 else ""
+        try:
+            return template.format(**kwargs)
+        except KeyError as exc:
+            log.warning("[PROMPTS] Missing format key %s for '%s'", exc, prompt_id)
+            return template
+
+    return template
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ONE-TIME MODEL SETUP
@@ -239,6 +392,20 @@ def _get_piper_voice(short_lang: str) -> PiperVoice:
     return _piper_voices[short_lang]
 
 
+def _get_piper_sample_rate(voice: PiperVoice) -> int:
+    """Get the voice's native sample rate, with a safe fallback."""
+    try:
+        return voice.config.sample_rate
+    except AttributeError:
+        pass
+    try:
+        return voice.config["sample_rate"]
+    except (AttributeError, TypeError, KeyError):
+        pass
+    log.warning("[TTS] Could not detect Piper sample rate — defaulting to 22050 Hz.")
+    return 22050
+
+
 def text_to_speech(text: str, language_code: str = None) -> bytes:
     """Synthesise text → WAV bytes using Piper (in-memory, no disk I/O)."""
     if language_code is None:
@@ -246,14 +413,24 @@ def text_to_speech(text: str, language_code: str = None) -> bytes:
     short_lang = language_code.lower().split("-")[0]
 
     voice = _get_piper_voice(short_lang)
+    sample_rate = _get_piper_sample_rate(voice)
 
-    # Create a virtual file in RAM
     wav_io = io.BytesIO()
-    
-    # Piper writes the complete WAV file (headers and all) into RAM
-    voice.synthesize(text, wav_io)
-    
-    # Return the bytes directly
+    with wave.open(wav_io, "wb") as wav_writer:
+        wav_writer.setnchannels(1)
+        wav_writer.setsampwidth(2)
+        wav_writer.setframerate(sample_rate)
+
+        for chunk in voice.synthesize(text):
+            audio_bytes = getattr(chunk, "audio_int16_bytes", None)
+            if audio_bytes is None:
+                arr = getattr(chunk, "audio_int16_array", None)
+                if arr is not None:
+                    audio_bytes = arr.tobytes()
+            if audio_bytes is None:
+                audio_bytes = bytes(chunk)   # last-resort fallback
+            wav_writer.writeframes(audio_bytes)
+
     return wav_io.getvalue()
 
 
