@@ -149,8 +149,8 @@ def record_and_save_reminder(is_held_fn) -> None:
 
 
 def _check_and_play_reminders() -> None:
-    now = datetime.now()
-    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    global _last_triggered
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn = db.get_conn()
     rows = conn.execute(
         "SELECT id, message FROM reminders WHERE trigger_datetime <= ? AND done = 0",
@@ -162,6 +162,8 @@ def _check_and_play_reminders() -> None:
         speak(t("reminder_label"), config.HELMET_LANGUAGE_CODE)
         audio = text_to_speech(row["message"], language_code=config.HELMET_LANGUAGE_CODE)
         play_audio_bytes(audio)
+        with _last_triggered_lock:                          # ← this line was missing
+            _last_triggered = {"message": row["message"]}  # ← this line was missing
         conn.execute("UPDATE reminders SET done = 1 WHERE id = ?", (row["id"],))
     conn.commit()
     conn.close()

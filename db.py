@@ -35,7 +35,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS reminders (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             message      TEXT    NOT NULL,
-            trigger_time TEXT    NOT NULL,   -- 'HH:MM' 24-hour format
+            trigger_datetime TEXT    NOT NULL,   -- 'YYYY-MM-DD HH:MM:SS' full datetime
             done         INTEGER DEFAULT 0,  -- 0 = pending, 1 = played
             created_at   TEXT    NOT NULL
         )
@@ -88,6 +88,7 @@ def _migrate_handover_table(c):
 
 def _migrate_reminders_table(c):
     existing_cols = {row[1] for row in c.execute("PRAGMA table_info(reminders)").fetchall()}
-    if "trigger_datetime" not in existing_cols:
+    if "trigger_time" in existing_cols and "trigger_datetime" not in existing_cols:
         c.execute("ALTER TABLE reminders ADD COLUMN trigger_datetime TEXT")
-        log.info("[DB] Migrated: added reminders.trigger_datetime")
+        c.execute("UPDATE reminders SET trigger_datetime = '2000-01-01 ' || trigger_time || ':00'")
+        log.info("[DB] Migrated: reminders.trigger_time → trigger_datetime")

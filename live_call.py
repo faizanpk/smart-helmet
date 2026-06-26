@@ -135,7 +135,7 @@ class LiveCall:
                 sock.close()
             log.info("[CALL-RECV] Stopped.")
 
-    def _find_device(p, alsa_name: str, is_input: bool):
+    def _find_device(self, p, alsa_name: str, is_input: bool):
         if not alsa_name:
             return None
         for i in range(p.get_device_count()):
