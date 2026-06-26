@@ -69,7 +69,8 @@ def setup_gpio() -> None:
         # Input buttons – active LOW
         for pin in (config.BTN_SPEAK_MANAGER, config.BTN_SPEAK_WORKER,
                     config.BTN_REMINDER, config.BTN_HANDOVER,
-                    config.BTN_PLAY_MSG, config.BTN_CALL_MANAGER):
+                    config.BTN_PLAY_MSG, config.BTN_CALL_MANAGER,
+                    config.SWITCH_LOUDSPEAKER):
             GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
         # LED output
         GPIO.setup(config.LED_MSG_PIN, GPIO.OUT, initial=GPIO.LOW)
