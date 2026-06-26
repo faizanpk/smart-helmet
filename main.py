@@ -45,7 +45,7 @@ import peer_network
 from call_manager import CallSlot
 from live_call import LiveCall
 from reminders import start_reminder_loop, record_and_save_reminder, replay_last_reminder
-from handover import handle_handover_button, replay_last_handover
+from handover import handle_handover_button, replay_last_handover, record_handover
 from translation import (
     play_audio_bytes, speak, translate_text, text_to_speech,
     transcribe_only, play_alert_beep, voice_to_text, t,
@@ -240,19 +240,38 @@ def _on_peer_message(msg_type: str, meta: dict, payload: bytes) -> None:
 # Manager connection events
 # ─────────────────────────────────────────────────────────────────────────────
 
+
+def _on_manager_disconnected() -> None:
+    """Called on the worker when the TCP connection to the manager drops."""
+    log.warning("[MAIN] Manager disconnected.")
+    slot = _call_slots.get("manager")
+    if slot and slot.is_in_call:
+        slot.on_call_ended()
+    speak(t("manager_disconnected"), config.HELMET_LANGUAGE_CODE)
+
 def _on_worker_connected(worker_id: str) -> None:
-    workers = network.get_worker_ids()
-    n = workers.index(worker_id) + 1 if worker_id in workers else "?"
+    try:
+        n = config._FIXED_WORKER_ORDER.index(worker_id) + 1
+    except ValueError:
+        n = "?"
     log.info("[MAIN] Worker '%s' connected (slot %s).", worker_id, n)
     speak(t("worker_connected", n=n), config.HELMET_LANGUAGE_CODE)
 
+    if config.HELMET_ROLE != "manager":
+        network.set_manager_event_callbacks(on_disconnect=_on_manager_disconnected)
+        network.connect_to_server(config.MANAGER_IP, config.COMM_PORT, _on_network_message)
+
 
 def _on_worker_disconnected(worker_id: str) -> None:
+    try:
+        n = config._FIXED_WORKER_ORDER.index(worker_id) + 1
+    except ValueError:
+        n = "?"
     log.info("[MAIN] Worker '%s' disconnected.", worker_id)
     slot = _get_slot_for_worker(worker_id)
     if slot and slot.is_in_call:
         slot.on_call_ended()
-    speak(t("worker_disconnected"), config.HELMET_LANGUAGE_CODE)
+    speak(t("worker_disconnected", n=n), config.HELMET_LANGUAGE_CODE)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -492,16 +511,27 @@ def _handle_reminder() -> None:
 
 
 def _handle_handover() -> None:
-    
-    """Double-tap (within 2s) → replay last handover. Otherwise normal play/record flow."""
-    
+    """
+    Double-tap → replay last handover (no state change).
+    Long hold  → record / overwrite handover.
+    Short press→ play unplayed handover, or re-play last if already heard.
+    """
     if _is_double_tap(config.BTN_HANDOVER):
         replay_last_handover()
         gpio.wait_for_release(config.BTN_HANDOVER, max_seconds=2)
         return
-    
-    is_held = lambda: gpio.is_pressed(config.BTN_HANDOVER)
-    handle_handover_button(is_held)
+
+    # Detect long hold vs short press
+    start = time.time()
+    while gpio.is_pressed(config.BTN_HANDOVER):
+        if time.time() - start >= LONG_PRESS_SECS:
+            is_held = lambda: gpio.is_pressed(config.BTN_HANDOVER)
+            record_handover(is_held)
+            return
+        time.sleep(0.05)
+
+    # Short press
+    handle_handover_button(lambda: gpio.is_pressed(config.BTN_HANDOVER))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

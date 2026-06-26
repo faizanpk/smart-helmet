@@ -71,6 +71,13 @@ _send_locks: Dict[socket.socket, threading.Lock] = {}
 _send_locks_guard = threading.Lock()
 
 
+_on_manager_disconnected: Optional[Callable] = None  
+
+def set_manager_event_callbacks(on_disconnect=None):
+    """Register callback for manager disconnect (worker only)."""
+    global _on_manager_disconnected
+    _on_manager_disconnected = on_disconnect
+
 def set_worker_event_callbacks(on_connect=None, on_disconnect=None):
     """Register callbacks for worker connection events (manager only)."""
     global _on_worker_connected, _on_worker_disconnected
@@ -196,6 +203,12 @@ def _worker_recv_loop(sock: socket.socket, on_message) -> None:
         if msg_type is None:
             log.warning("[NET] Lost manager connection.")
             _manager_sock = None
+            # Notify main.py
+            if _on_manager_disconnected:
+                try:
+                    _on_manager_disconnected()
+                except Exception as exc:
+                    log.error("[NET] on_manager_disconnected error: %s", exc)
             break
         try:
             on_message(msg_type, meta, payload)

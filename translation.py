@@ -46,8 +46,8 @@ _PROMPTS = {
                               "de": "{n} Nachricht{plural_de} empfangen. Drücken Sie P zum Abspielen."},
     "worker_connected":      {"en": "Worker {n} connected. Press F{n} to call, or {n} to send a message.",
                               "de": "Arbeiter {n} verbunden. Drücken Sie F{n} zum Anrufen, oder {n} für eine Nachricht."},
-    "worker_disconnected":   {"en": "A worker disconnected.",
-                              "de": "Ein Arbeiter hat die Verbindung getrennt."},
+    "worker_disconnected": {"en": "Worker {n} disconnected.",
+                            "de": "Arbeiter {n} hat die Verbindung getrennt."},
     "smart_helmet_ready":    {"en": "Smart helmet ready.",
                               "de": "Smarter Helm ist bereit."},
 
@@ -66,6 +66,8 @@ _PROMPTS = {
                               "de": "Partner nicht erreichbar."},
     "no_worker_selected":    {"en": "No worker selected. Press 1, 2.",
                               "de": "Kein Arbeiter ausgewählt. Drücken Sie 1, 2."},
+    "manager_disconnected": {"en": "Manager disconnected.",
+                         "de": "Manager hat die Verbindung getrennt."},
 
     # Mute
     "muted":                 {"en": "Muted.", "de": "Stummgeschaltet."},
