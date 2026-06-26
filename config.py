@@ -53,7 +53,7 @@ PIPER_VOICE_EN = os.path.join(PIPER_VOICES_DIR, "en_US-lessac-medium.onnx")
 PIPER_VOICE_DE = os.path.join(PIPER_VOICES_DIR, "de_DE-thorsten-medium.onnx")
 
 # ─── Network – Manager ────────────────────────────────────────────────────────
-MANAGER_IP = "100.83.158.255"      # ← Laptop 1 (manager) LAN IP
+MANAGER_IP = "192.168.43.210"      # ← Laptop 1 (manager) LAN IP
 COMM_PORT  = 5005                 # TCP port: worker ↔ manager
 
 # Legacy alias kept for live_call.py
@@ -61,8 +61,8 @@ PARTNER_IP = MANAGER_IP
 
 # ─── Network – Workers (manager needs each worker's IP to call/message them) ──
 WORKER_IPS = {
-    "w-01": "192.168.1.101",      # Raspberry Pi worker
-    "w-02": "192.168.1.102",      # Laptop worker
+    "w-01": "192.168.43.138",      # Raspberry Pi worker
+    "w-02": "192.168.43.145",      # Laptop worker
 }
 PEER_PORT      = 5007             # TCP port: worker ↔ worker
 
@@ -127,3 +127,10 @@ ALSA_SPK_DEVICE = "plughw:1,0"
 # ─── Volume ──────────────────────────────────────────────────────────────────────────────
 VOLUME_NORMAL  = 80
 VOLUME_SPEAKER = 100
+
+# Loudspeaker mode toggle switch
+SWITCH_LOUDSPEAKER = 26   # BCM pin — pick any free GPIO pin, confirm against your wiring
+
+# Two separate physical speaker outputs
+ALSA_SPK_DEVICE_INTERNAL = "plughw:0,0"     # normal/internal speaker — confirm via aplay -l
+ALSA_SPK_DEVICE_EXTERNAL = "plughw:1,0"     # external loudspeaker — confirm via aplay -l

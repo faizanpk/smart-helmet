@@ -38,6 +38,7 @@ import struct
 import json
 import threading
 import logging
+import time as _time
 from typing import Callable, Dict, List, Optional, Tuple
 
 import config
@@ -238,7 +239,6 @@ def start_server(port: int, on_message) -> None:
 
 def send_voice_message_to(worker_id: str, text: str, language: str) -> bool:
     """(Manager) Send a text voice message to a specific worker."""
-    import time as _time
     meta = {
         "sender_id":   config.HELMET_ID,
         "sender_role": "manager",

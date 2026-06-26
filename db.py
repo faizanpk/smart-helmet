@@ -51,11 +51,13 @@ def init_db():
             zone        TEXT,               -- location / zone on site
             message     TEXT    NOT NULL,   -- full transcribed text
             timestamp   TEXT    NOT NULL,   -- ISO datetime string
-            played_by   TEXT    DEFAULT ''  -- comma-separated HELMET_IDs that read this
+            played_by   TEXT    DEFAULT '',  -- comma-separated HELMET_IDs that read this
+            language    TEXT    DEFAULT 'en'
         )
     """)
 
     _migrate_handover_table(c)
+    _migrate_reminders_table(c)
 
     conn.commit()
     conn.close()
@@ -65,8 +67,7 @@ def init_db():
 def _migrate_handover_table(c):
     """
     Add new columns to an existing handover table if it was created by an
-    older version of this code (before sender_id/played_by existed).
-    Safe to run every startup — does nothing if columns already exist.
+    older version of this code. Safe to run every startup.
     """
     existing_cols = {row[1] for row in c.execute("PRAGMA table_info(handover)").fetchall()}
 
@@ -78,5 +79,15 @@ def _migrate_handover_table(c):
         c.execute("ALTER TABLE handover ADD COLUMN played_by TEXT DEFAULT ''")
         log.info("[DB] Migrated: added handover.played_by")
 
+    if "language" not in existing_cols:
+        c.execute("ALTER TABLE handover ADD COLUMN language TEXT DEFAULT 'en'")
+        log.info("[DB] Migrated: added handover.language")
+
     if "played" in existing_cols:
         log.info("[DB] Note: legacy 'played' column still present but no longer used by code.")
+
+def _migrate_reminders_table(c):
+    existing_cols = {row[1] for row in c.execute("PRAGMA table_info(reminders)").fetchall()}
+    if "trigger_datetime" not in existing_cols:
+        c.execute("ALTER TABLE reminders ADD COLUMN trigger_datetime TEXT")
+        log.info("[DB] Migrated: added reminders.trigger_datetime")

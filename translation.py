@@ -20,6 +20,7 @@ import tempfile
 import threading
 import wave
 import logging
+import speaker_mode
 
 import pyaudio
 from deep_translator import GoogleTranslator
@@ -438,32 +439,36 @@ def text_to_speech(text: str, language_code: str = None) -> bytes:
 # PLAYBACK  (unchanged)
 # ─────────────────────────────────────────────────────────────────────────────
 
+_speaker_lock = threading.Lock()
+
 def play_audio_bytes(wav_bytes: bytes) -> None:
     """Play WAV audio bytes through the local speaker."""
-    if not wav_bytes:
-        return
+    with _speaker_lock:
+        if not wav_bytes:
+            return
 
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-        f.write(wav_bytes)
-        tmp_path = f.name
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            f.write(wav_bytes)
+            tmp_path = f.name
 
-    try:
-        if platform.system() == "Windows":
-            import winsound
-            winsound.PlaySound(tmp_path, winsound.SND_FILENAME)
-        else:
-            cmd = ["aplay", "--quiet"]
-            if config.ALSA_SPK_DEVICE:
-                cmd += ["-D", config.ALSA_SPK_DEVICE]
-            cmd.append(tmp_path)
-            subprocess.run(cmd, check=True)
-    except Exception as exc:
-        log.error("[AUDIO] Playback error: %s", exc)
-    finally:
         try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+            if platform.system() == "Windows":
+                import winsound
+                winsound.PlaySound(tmp_path, winsound.SND_FILENAME)
+            else:
+                device = speaker_mode.get_speaker_device()
+                cmd = ["aplay", "--quiet"]
+                if config.ALSA_SPK_DEVICE:
+                    cmd += ["-D", config.ALSA_SPK_DEVICE]
+                cmd.append(tmp_path)
+                subprocess.run(cmd, check=True)
+        except Exception as exc:
+            log.error("[AUDIO] Playback error: %s", exc)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 def speak(text: str, language_code: str = None) -> None:

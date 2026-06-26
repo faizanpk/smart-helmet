@@ -138,6 +138,7 @@ class CallSlot:
 
         self._cancel_ring_timer()
         log.info("[CALL] Call accepted by %s – starting audio.", self.slot_id)
+        
         self._start_audio()
         speak(t("call_connected"), config.HELMET_LANGUAGE_CODE)
 
@@ -213,8 +214,12 @@ class CallSlot:
             self._ring_timer = None
 
     def _start_audio(self) -> None:
-        self._live_call = self._make_live_call(self.partner_ip)
-        log.info("[CALL] Audio streaming started (%s).", self.slot_id)
+        try:
+            self._live_call = self._make_live_call(self.partner_ip)
+            log.info("[CALL] Audio streaming started (%s).", self.slot_id)
+        except Exception:
+            log.exception("[CALL] Failed to start audio for %s.", self.slot_id)
+            speak(t("partner_unreachable"), config.HELMET_LANGUAGE_CODE)
 
     def _stop_audio(self) -> None:
         if self._live_call:

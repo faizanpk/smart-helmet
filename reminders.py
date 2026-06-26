@@ -17,6 +17,8 @@ import threading
 import time
 import logging
 from datetime import datetime, timedelta
+import dateparser
+from datetime import datetime, timedelta
 
 import schedule as _schedule  # third-party 'schedule' package
 
@@ -104,17 +106,18 @@ def parse_trigger_time(text: str) -> str | None:
 
 # ─── Save reminder ────────────────────────────────────────────────────────────
 
-def save_reminder(message: str, trigger_time: str) -> None:
-    """Persist a reminder to the database."""
+def save_reminder(message: str, trigger_dt: datetime) -> None:
+    """Persist a reminder with a full datetime trigger."""
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    trigger_str = trigger_dt.strftime("%Y-%m-%d %H:%M:%S")
     conn = db.get_conn()
-    with conn:
-        conn.execute(
-            "INSERT INTO reminders (message, trigger_time, done, created_at) VALUES (?, ?, 0, ?)",
-            (message, trigger_time, created_at),
-        )
+    conn.execute(
+        "INSERT INTO reminders (message, trigger_datetime, done, created_at) VALUES (?, ?, 0, ?)",
+        (message, trigger_str, created_at),
+    )
+    conn.commit()
     conn.close()
-    log.info("[REMINDER] Saved: '%s' at %s", message, trigger_time)
+    log.info("[REMINDER] Saved: '%s' at %s", message, trigger_str)
 
 
 # ─── Record + save flow (triggered by button) ─────────────────────────────────
@@ -135,22 +138,23 @@ def record_and_save_reminder(is_held_fn) -> None:
         speak(t("not_understood_retry"), config.HELMET_LANGUAGE_CODE)
         return
 
-    trigger_time = parse_trigger_time(text)
-    if not trigger_time:
+    trigger_dt = parse_trigger_datetime(text)
+    if not trigger_dt:
         speak(t("reminder_no_time"), config.HELMET_LANGUAGE_CODE)
         return
 
-    save_reminder(text, trigger_time)
-    speak(t("reminder_saved", time=trigger_time), config.HELMET_LANGUAGE_CODE)
+    save_reminder(text, trigger_dt)
+    friendly_time = trigger_dt.strftime("%H:%M")
+    speak(t("reminder_saved", time=friendly_time), config.HELMET_LANGUAGE_CODE)
 
 
 def _check_and_play_reminders() -> None:
-    global _last_triggered
-    now = datetime.now().strftime("%H:%M")
+    now = datetime.now()
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
     conn = db.get_conn()
     rows = conn.execute(
-        "SELECT id, message FROM reminders WHERE trigger_time = ? AND done = 0",
-        (now,),
+        "SELECT id, message FROM reminders WHERE trigger_datetime <= ? AND done = 0",
+        (now_str,),
     ).fetchall()
     for row in rows:
         log.info("[REMINDER] Triggered: '%s'", row["message"])
@@ -158,8 +162,6 @@ def _check_and_play_reminders() -> None:
         speak(t("reminder_label"), config.HELMET_LANGUAGE_CODE)
         audio = text_to_speech(row["message"], language_code=config.HELMET_LANGUAGE_CODE)
         play_audio_bytes(audio)
-        with _last_triggered_lock:
-            _last_triggered = {"message": row["message"]}
         conn.execute("UPDATE reminders SET done = 1 WHERE id = ?", (row["id"],))
     conn.commit()
     conn.close()
@@ -194,3 +196,45 @@ def start_reminder_loop() -> None:
     t = threading.Thread(target=_run, name="reminder-loop", daemon=True)
     t.start()
     log.info("[REMINDER] Background loop started (checks every 30 s).")
+    
+
+def parse_trigger_datetime(text: str, now: datetime = None) -> datetime | None:
+    """
+    Parse natural language time expressions into a concrete datetime.
+    Handles: "in 20 minutes", "tomorrow at the same time", "after 3.5 hours",
+    "at 3:15 this afternoon", "next Tuesday at 11am", explicit times, etc.
+    Supports English and German.
+    """
+    if now is None:
+        now = datetime.now()
+
+    # "the same time [tomorrow]" needs special handling — dateparser doesn't
+    # know what "the same time" refers to without context
+    t = text.lower()
+    if "same time" in t or "gleiche zeit" in t:
+        if "tomorrow" in t or "morgen" in t:
+            return now.replace(second=0, microsecond=0) + timedelta(days=1)
+        return now.replace(second=0, microsecond=0)
+
+    # "after N(.N) hours" / "in N(.N) hours" — dateparser handles "in" well,
+    # but decimal hours ("3.5 hours") sometimes need help
+    m = re.search(r'(?:after|in)\s+(\d+(?:\.\d+)?)\s*hours?', t)
+    if m:
+        hours = float(m.group(1))
+        return now + timedelta(hours=hours)
+
+    m = re.search(r'(?:after|in)\s+(\d+(?:\.\d+)?)\s*min(?:ute)?s?', t)
+    if m:
+        minutes = float(m.group(1))
+        return now + timedelta(minutes=minutes)
+
+    # Everything else — hand off to dateparser
+    parsed = dateparser.parse(
+        text,
+        settings={
+            "PREFER_DATES_FROM": "future",   # "Tuesday" means next Tuesday, not last
+            "RELATIVE_BASE": now,
+        },
+        languages=["en", "de"],
+    )
+    return parsed

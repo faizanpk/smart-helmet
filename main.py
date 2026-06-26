@@ -548,10 +548,7 @@ def _button_monitor(pin: int, handler, name: str) -> None:
             handler()
         except Exception as exc:
             log.error("[MONITOR] Error in %s: %s", name, exc)
-            try:
-                speak(t("not_understood_retry"), config.HELMET_LANGUAGE_CODE)
-            except Exception:
-                pass
+        time.sleep(0.25)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -615,7 +612,9 @@ def main() -> None:
             log.info("[MAIN] Call slot created for %s (%s).", wid, label)
 
     else:
-        # Worker: one slot to manager
+        # Worker: one slot to manager — use THIS worker's own offset, not hardcoded 0
+        my_offset = config.CALL_PORT_OFFSETS.get(config.HELMET_ID, 0)
+
         _call_slots["manager"] = CallSlot(
             slot_id="manager",
             partner_label="manager",
@@ -623,9 +622,9 @@ def main() -> None:
             send_request_fn=lambda sid: network.send_call_request(sid),
             send_accept_fn=lambda sid: network.send_call_accept(sid),
             send_end_fn=lambda sid: network.send_call_end(sid),
-            live_call_factory=lambda ip: _make_live_call(ip, 0),
+            live_call_factory=lambda ip, _offset=my_offset: _make_live_call(ip, _offset),
         )
-        log.info("[MAIN] Call slot created for manager.")
+        log.info("[MAIN] Call slot created for manager (offset=%d).", my_offset)
 
     # 7. Network
     if config.HELMET_ROLE == "manager":
