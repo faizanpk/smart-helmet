@@ -53,7 +53,7 @@ PIPER_VOICE_EN = os.path.join(PIPER_VOICES_DIR, "en_US-lessac-medium.onnx")
 PIPER_VOICE_DE = os.path.join(PIPER_VOICES_DIR, "de_DE-thorsten-medium.onnx")
 
 # ─── Network – Manager ────────────────────────────────────────────────────────
-MANAGER_IP = "192.168.2.101"      # ← Laptop 1 (manager) LAN IP
+MANAGER_IP = "192.168.43.210"      # ← Laptop 1 (manager) LAN IP
 COMM_PORT  = 5005                 # TCP port: worker ↔ manager
 
 # Legacy alias kept for live_call.py
@@ -62,7 +62,7 @@ PARTNER_IP = MANAGER_IP
 # ─── Network – Workers (manager needs each worker's IP to call/message them) ──
 WORKER_IPS = {
     "w-01": "192.168.43.138",      # Raspberry Pi worker
-    "w-02": "192.168.2.102",      # Laptop worker
+    "w-02": "192.168.43.145",      # Laptop worker
 }
 PEER_PORT      = 5007             # TCP port: worker ↔ worker
 

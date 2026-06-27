@@ -142,7 +142,7 @@ def cleanup_old_records(days: int = 7) -> None:
     c.execute("DELETE FROM reminders WHERE done = 1 AND created_at < ?", (cutoff,))
     reminders_deleted = c.rowcount
 
-    c.execute("DELETE FROM handover WHERE played = 1 AND timestamp < ?", (cutoff,))
+    c.execute("DELETE FROM handover WHERE played_by IS NOT NULL AND played_by != '' AND timestamp < ?", (cutoff,))
     handover_deleted = c.rowcount
 
     conn.commit()
