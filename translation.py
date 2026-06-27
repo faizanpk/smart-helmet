@@ -20,6 +20,8 @@ import tempfile
 import threading
 import wave
 import logging
+import numpy as np
+import noisereduce as nr
 import speaker_mode
 
 import pyaudio
@@ -314,10 +316,26 @@ def record_until_release(is_held_fn, max_seconds: float = None) -> bytes:
 # SPEECH-TO-TEXT  (unchanged)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _denoise_pcm(audio_bytes: bytes) -> bytes:
+    """
+    Apply spectral noise suppression to raw PCM (int16, mono, 16kHz).
+    Reduces steady background noise (machinery, wind, engines) before STT.
+    Returns cleaned PCM bytes in the same format.
+    """
+    try:
+        audio_np = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
+        reduced  = nr.reduce_noise(y=audio_np, sr=config.SAMPLE_RATE, stationary=True)
+        return reduced.astype(np.int16).tobytes()
+    except Exception as exc:
+        log.warning("[STT] Noise reduction failed, using raw audio: %s", exc)
+        return audio_bytes   # fall back to original if anything goes wrong
+
 def voice_to_text(audio_bytes: bytes, language_code: str = None) -> str:
     """Convert raw PCM → text via local Whisper model."""
     if not audio_bytes or len(audio_bytes) < config.CHUNK * 2:
         return ""
+    
+    audio_bytes = _denoise_pcm(audio_bytes)
 
     whisper_lang = None
     if language_code:
@@ -348,6 +366,8 @@ def transcribe_only(audio_bytes: bytes) -> tuple:
     """Run Whisper STT only (no translation). Returns (text, detected_language)."""
     if not audio_bytes or len(audio_bytes) < config.CHUNK * 2:
         return "", ""
+    
+    audio_bytes = _denoise_pcm(audio_bytes)
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         tmp_wav = f.name

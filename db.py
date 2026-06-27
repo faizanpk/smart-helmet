@@ -3,6 +3,7 @@
 
 import sqlite3
 import os
+from datetime import datetime, timedelta
 import logging
 import config
 
@@ -22,6 +23,32 @@ def get_conn() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row   # access columns by name
     return conn
 
+
+def check_and_recover_db() -> None:
+    """
+    Check SQLite integrity. If the DB is corrupt, rename it (preserves it for
+    debugging) and let init_db() create a fresh one on the next call.
+    """
+    if not os.path.exists(config.DB_PATH):
+        return   # nothing to check yet
+
+    try:
+        conn = sqlite3.connect(config.DB_PATH)
+        result = conn.execute("PRAGMA integrity_check").fetchone()
+        conn.close()
+        if result and result[0] == "ok":
+            return   # healthy
+        log.error("[DB] Integrity check FAILED: %s", result)
+    except Exception as exc:
+        log.error("[DB] Cannot open DB: %s", exc)
+
+    # Rename corrupt file and start fresh
+    corrupt_path = config.DB_PATH + ".corrupt"
+    try:
+        os.rename(config.DB_PATH, corrupt_path)
+        log.warning("[DB] Corrupt DB renamed to %s. A fresh DB will be created.", corrupt_path)
+    except OSError as e:
+        log.error("[DB] Could not rename corrupt DB: %s", e)
 
 # ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -88,7 +115,37 @@ def _migrate_handover_table(c):
 
 def _migrate_reminders_table(c):
     existing_cols = {row[1] for row in c.execute("PRAGMA table_info(reminders)").fetchall()}
+
     if "trigger_time" in existing_cols and "trigger_datetime" not in existing_cols:
-        c.execute("ALTER TABLE reminders ADD COLUMN trigger_datetime TEXT")
-        c.execute("UPDATE reminders SET trigger_datetime = '2000-01-01 ' || trigger_time || ':00'")
-        log.info("[DB] Migrated: reminders.trigger_time → trigger_datetime")
+        log.info("[DB] Migrating reminders table — old rows discarded.")
+        c.execute("DROP TABLE reminders")
+        c.execute("""
+            CREATE TABLE reminders (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                message          TEXT    NOT NULL,
+                trigger_datetime TEXT    NOT NULL,
+                done             INTEGER DEFAULT 0,
+                created_at       TEXT    NOT NULL
+            )
+        """)
+        log.info("[DB] Reminders table recreated with trigger_datetime column.")
+
+def cleanup_old_records(days: int = 7) -> None:
+    """
+    Delete fired reminders and played handovers older than `days` days.
+    Call this once at startup from main.py.
+    """
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_conn()
+    c = conn.cursor()
+
+    c.execute("DELETE FROM reminders WHERE done = 1 AND created_at < ?", (cutoff,))
+    reminders_deleted = c.rowcount
+
+    c.execute("DELETE FROM handover WHERE played = 1 AND timestamp < ?", (cutoff,))
+    handover_deleted = c.rowcount
+
+    conn.commit()
+    conn.close()
+    log.info("[DB] Cleanup: removed %d old reminders, %d old handover entries.",
+             reminders_deleted, handover_deleted)

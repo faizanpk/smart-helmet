@@ -218,6 +218,9 @@ def _on_network_message(msg_type: str, meta: dict, payload: bytes) -> None:
         # Legacy raw audio from live_call (already handled by LiveCall threads)
         pass
 
+    elif msg_type == network.MSG_EMERGENCY:
+        _handle_emergency_incoming(meta)
+
     elif msg_type == network.MSG_CONTROL:
         log.info("[MAIN] Control: %s", meta)
 
@@ -431,6 +434,14 @@ def _replay_last_message() -> None:
 
 def _handle_play_msg() -> None:
 
+    start = time.time()
+    while gpio.is_pressed(config.BTN_PLAY_MSG):
+        if time.time() - start >= _EMERGENCY_HOLD_SECS:
+            _trigger_emergency()
+            gpio.wait_for_release(config.BTN_PLAY_MSG, max_seconds=10)
+            return
+        time.sleep(0.05)
+
     if _is_in_any_call():
         return   # don't play messages during call
     """
@@ -489,6 +500,24 @@ def _handle_language_config() -> None:
     speak(t("configured_en") if lang == "en" else t("configured_de"),
           config.HELMET_LANGUAGE_CODE)
 
+
+_EMERGENCY_HOLD_SECS = 5.0   # hold Play button this long to trigger
+
+def _trigger_emergency() -> None:
+    """Send emergency alert and announce it locally."""
+    log.warning("[MAIN] EMERGENCY triggered by %s.", config.HELMET_ID)
+    speak("Emergency alert sent.", config.HELMET_LANGUAGE_CODE)
+    network.broadcast_emergency(config.HELMET_ID, config.HELMET_ROLE)
+
+
+def _handle_emergency_incoming(meta: dict) -> None:
+    """Play emergency alert when received from another helmet."""
+    sender_id   = meta.get("sender_id", "unknown")
+    sender_role = meta.get("sender_role", "unknown")
+    label = sender_id if sender_role == "worker" else "manager"
+    log.warning("[MAIN] EMERGENCY received from %s.", sender_id)
+    play_alert_beep(5)
+    speak(f"Emergency alert from {label}.", config.HELMET_LANGUAGE_CODE)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Other button handlers
@@ -606,7 +635,9 @@ def main() -> None:
     setup_offline_models()
 
     # 3. Database
+    db.check_and_recover_db() 
     db.init_db()
+    db.cleanup_old_records(days=7)
 
     # 4. GPIO / keyboard + LED
     gpio.setup_gpio()

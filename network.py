@@ -50,6 +50,7 @@ MSG_HELLO         = "hello"
 MSG_TRANSLATION   = "translation"    # legacy (kept for live_call.py compat)
 MSG_CONTROL       = "control"
 MSG_VOICE_MESSAGE = "voice_message"  # text message: sender sends text, receiver plays
+MSG_EMERGENCY     = "emergency_broadcast"
 MSG_CALL_REQUEST  = "call_request"   # caller → callee: initiate a call
 MSG_CALL_ACCEPT   = "call_accept"    # callee → caller: call answered
 MSG_CALL_END      = "call_end"       # either → other: hang up / cancel
@@ -464,3 +465,22 @@ def send_call_end(target_id: str) -> bool:
         if _manager_sock is None:
             return False
         return _send_frame(_manager_sock, MSG_CALL_END, b"", meta)
+
+def broadcast_emergency(sender_id: str, sender_role: str) -> None:
+    """
+    (Manager) Send emergency alert to all connected workers.
+    (Worker)  Send emergency alert to manager.
+    """
+    meta = {"sender_id": sender_id, "sender_role": sender_role}
+
+    if config.HELMET_ROLE == "manager":
+        with _workers_lock:
+            targets = list(_workers.values())
+        for sock in targets:
+            _send_frame(sock, MSG_EMERGENCY, b"", meta)
+        log.warning("[NET] Emergency broadcast sent to %d workers.", len(targets))
+    else:
+        sock = _manager_sock
+        if sock:
+            _send_frame(sock, MSG_EMERGENCY, b"", meta)
+            log.warning("[NET] Emergency sent to manager.")

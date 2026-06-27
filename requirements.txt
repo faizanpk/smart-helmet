@@ -8,6 +8,8 @@ piper-tts
 pyaudio
 schedule
 dateparser
+noisereduce
+numpy
 keyboard
 RPi.GPIO>=0.7.1; sys_platform == "linux"
 # python -m piper.download_voices en_US-lessac-medium

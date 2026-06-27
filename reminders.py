@@ -18,6 +18,7 @@ import time
 import logging
 from datetime import datetime, timedelta
 import dateparser
+from dateparser.search import search_dates as _dp_search
 from datetime import datetime, timedelta
 
 import schedule as _schedule  # third-party 'schedule' package
@@ -143,9 +144,14 @@ def record_and_save_reminder(is_held_fn) -> None:
         speak(t("reminder_no_time"), config.HELMET_LANGUAGE_CODE)
         return
 
-    save_reminder(text, trigger_dt)
-    friendly_time = trigger_dt.strftime("%H:%M")
-    speak(t("reminder_saved", time=friendly_time), config.HELMET_LANGUAGE_CODE)
+    now = datetime.now()
+    if trigger_dt.date() == now.date():
+        friendly = f"today at {trigger_dt.strftime('%H:%M')}"
+    elif trigger_dt.date() == (now + timedelta(days=1)).date():
+        friendly = f"tomorrow at {trigger_dt.strftime('%H:%M')}"
+    else:
+        friendly = trigger_dt.strftime("%A at %H:%M")   # e.g. "Saturday at 14:30"
+    speak(t("reminder_saved", time=friendly), config.HELMET_LANGUAGE_CODE)
 
 
 def _check_and_play_reminders() -> None:
@@ -230,13 +236,16 @@ def parse_trigger_datetime(text: str, now: datetime = None) -> datetime | None:
         minutes = float(m.group(1))
         return now + timedelta(minutes=minutes)
 
-    # Everything else — hand off to dateparser
-    parsed = dateparser.parse(
-        text,
-        settings={
-            "PREFER_DATES_FROM": "future",   # "Tuesday" means next Tuesday, not last
-            "RELATIVE_BASE": now,
-        },
-        languages=["en", "de"],
-    )
+    settings = {"PREFER_DATES_FROM": "future", "RELATIVE_BASE": now, "RETURN_AS_TIMEZONE_AWARE": False}
+    
+    results = _dp_search(text, languages=["en", "de"], settings=settings)
+    if results:
+        _, parsed = results[0]   # take the first match found
+        if parsed and parsed < now:
+            parsed += timedelta(days=1)
+        return parsed
+    # Final fallback — try parsing the whole string directly
+    parsed = dateparser.parse(text, languages=["en", "de"], settings=settings)
+    if parsed and parsed < now:
+        parsed += timedelta(days=1)
     return parsed
