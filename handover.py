@@ -69,12 +69,11 @@ def _mark_played(handover_id: int) -> None:
 def _play_entry(entry: dict, mark_as_played: bool = True) -> None:
     """Synthesise and play a handover entry via TTS."""
     speak(t("handover_playing"), config.HELMET_LANGUAGE_CODE)
-    full_text = f"Handover recorded at {entry['timestamp']}. {entry['message']}"
+    full_text = entry["message"]
     audio = text_to_speech(full_text, language_code=config.HELMET_LANGUAGE_CODE)
     play_audio_bytes(audio)
     if mark_as_played:
         _mark_played(entry["id"])
-    speak(t("handover_end"), config.HELMET_LANGUAGE_CODE)
 
 
 # ─── Recording ────────────────────────────────────────────────────────────────
@@ -95,8 +94,6 @@ def record_handover(is_held_fn) -> None:
         speak(t("handover_too_short"), config.HELMET_LANGUAGE_CODE)
         return
 
-    speak(t("handover_processing"), config.HELMET_LANGUAGE_CODE)
-
     text, detected_lang = transcribe_only(audio)
     recorded_lang = detected_lang if detected_lang in ("en", "de") else config.HELMET_LANGUAGE
 
@@ -110,9 +107,9 @@ def record_handover(is_held_fn) -> None:
     # Delete all previous handovers on this device — only one active note at a time
     conn.execute("DELETE FROM handover")
     conn.execute(
-        """INSERT INTO handover (message, timestamp, played, language)
-           VALUES (?, ?, 0, ?)""",
-        (text, timestamp, recorded_lang),
+        """INSERT INTO handover (message, timestamp, played, language, sender_role)
+           VALUES (?, ?, 0, ?, ?)""",
+        (text, timestamp, recorded_lang, config.HELMET_ROLE),
     )
     conn.commit()
     conn.close()
@@ -120,15 +117,13 @@ def record_handover(is_held_fn) -> None:
     log.info("[HANDOVER] Saved (%s): '%s'", recorded_lang, text)
     speak(t("handover_saved"), config.HELMET_LANGUAGE_CODE)
 
-    # Immediately play back for verification
-    speak(t("handover_verify"), config.HELMET_LANGUAGE_CODE)   # "Here is what was recorded:"
     audio_tts = text_to_speech(text, language_code=config.HELMET_LANGUAGE_CODE)
     play_audio_bytes(audio_tts)
 
 
 # ─── Main button handler ──────────────────────────────────────────────────────
 
-def handle_handover_button(is_held_fn) -> None:
+def handle_handover_button() -> None:
     """
     Short press:
       - Unplayed handover exists → play it (mark as played)
@@ -140,17 +135,6 @@ def handle_handover_button(is_held_fn) -> None:
     else:
         last = _get_last_handover()
         if last:
-            speak(t("handover_replaying"), config.HELMET_LANGUAGE_CODE)
             _play_entry(last, mark_as_played=False)
         else:
             speak(t("no_handover_to_replay"), config.HELMET_LANGUAGE_CODE)
-
-
-def replay_last_handover() -> None:
-    """Double-tap: replay last handover without changing its played state."""
-    last = _get_last_handover()
-    if last:
-        speak(t("handover_replaying"), config.HELMET_LANGUAGE_CODE)
-        _play_entry(last, mark_as_played=False)
-    else:
-        speak(t("no_handover_to_replay"), config.HELMET_LANGUAGE_CODE)

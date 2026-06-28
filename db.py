@@ -116,7 +116,7 @@ def _migrate_handover_table(c):
 def _migrate_reminders_table(c):
     existing_cols = {row[1] for row in c.execute("PRAGMA table_info(reminders)").fetchall()}
 
-    if "trigger_time" in existing_cols and "trigger_datetime" not in existing_cols:
+    if "trigger_datetime" in existing_cols:
         log.info("[DB] Migrating reminders table — old rows discarded.")
         c.execute("DROP TABLE reminders")
         c.execute("""

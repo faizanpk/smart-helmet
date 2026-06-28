@@ -129,7 +129,7 @@ def start_peer_server(port: int, on_message) -> None:
 
 def send_voice_message_to_peer(peer_ip: str, port: int,
                                text: str, language: str,
-                               sender_id: str) -> bool:
+                               sender_id: str, is_emergency: bool = False) -> bool:
     """
     Send a text voice message directly to the peer worker.
     The message is stored on the peer and played when they press BTN_PLAY_MSG.
@@ -142,6 +142,7 @@ def send_voice_message_to_peer(peer_ip: str, port: int,
         "text":        text,
         "language":    language,
         "channel":     "peer",
+        "is_emergency": is_emergency,
         "timestamp":   _time.time(),
     }
     return _send_to_peer_internal(peer_ip, port, "voice_message", b"", meta)

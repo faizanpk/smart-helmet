@@ -61,50 +61,6 @@ def _ampm_to_24(hour: int, period: str) -> str:
     return f"{hour:02d}:00"
 
 
-def parse_trigger_time(text: str) -> str | None:
-    """
-    Extract a HH:MM (24-hour) trigger time from a transcribed reminder string.
-    Returns a string like '14:30', or None if no time found.
-
-    Explicit numeric times are checked FIRST since they are unambiguous.
-    Word-based shortcuts ("noon", "Abend") are only used as a fallback,
-    and only match whole words — not substrings inside longer words like
-    "Abendessen".
-    """
-    t = text.lower()
-
-    # 1. Explicit HH:MM  (e.g. "14:30", "9:00") — most precise, check first
-    m = re.search(r'\b([01]?\d|2[0-3]):([0-5]\d)\b', t)
-    if m:
-        return f"{int(m.group(1)):02d}:{m.group(2)}"
-
-    # 2. "at N am/pm"  (e.g. "at 2 pm", "at 10 am")
-    m = re.search(r'\bat\s+(\d{1,2})\s*(am|pm)\b', t)
-    if m:
-        return _ampm_to_24(int(m.group(1)), m.group(2))
-
-    # 3. German "N Uhr [M]"  (e.g. "14 Uhr 30", "um 9 Uhr")
-    m = re.search(r'\b(\d{1,2})\s*uhr(?:\s+(\d{2}))?\b', t)
-    if m:
-        minutes = m.group(2) or "00"
-        return f"{int(m.group(1)):02d}:{minutes}"
-
-    # 4. Word-based shortcuts — fallback only, whole-word match required
-    for word, hhmm in _WORD_TIMES.items():
-        if re.search(rf'\b{re.escape(word)}\b', t):
-            return hhmm
-    
-    # 5. Relative "in N minutes/hours" (English & German)
-    m = re.search(r'\bin\s+(\d+)\s+(minute|minutes|minuten|hour|hours|stunde|stunden)\b', t)
-    if m:
-        val = int(m.group(1))
-        unit = m.group(2)
-        delta = timedelta(hours=val) if unit.startswith(('hour', 'stunde')) else timedelta(minutes=val)
-        return (datetime.now() + delta).strftime("%H:%M")
-
-    return None
-
-
 # ─── Save reminder ────────────────────────────────────────────────────────────
 
 def save_reminder(message: str, trigger_dt: datetime) -> None:
@@ -134,7 +90,6 @@ def record_and_save_reminder(is_held_fn) -> None:
         speak(t("reminder_too_short"), config.HELMET_LANGUAGE_CODE)
         return
 
-    speak(t("reminder_processing"), config.HELMET_LANGUAGE_CODE)
     text = voice_to_text(audio, language_code=config.HELMET_LANGUAGE_CODE)
 
     if not text:
@@ -153,6 +108,8 @@ def record_and_save_reminder(is_held_fn) -> None:
         friendly = f"tomorrow at {trigger_dt.strftime('%H:%M')}"
     else:
         friendly = trigger_dt.strftime("%A at %H:%M")   # e.g. "Saturday at 14:30"
+    
+    save_reminder(text, trigger_dt)
     speak(t("reminder_saved", time=friendly), config.HELMET_LANGUAGE_CODE)
 
 
@@ -208,23 +165,68 @@ def start_reminder_loop() -> None:
     log.info("[REMINDER] Background loop started (checks every 30 s).")
     
 
+def _parse_digit_run_time(text: str, now: datetime) -> datetime | None:
+    """
+    Handle times Whisper transcribes as a bare digit run with no separator,
+    e.g. "832" -> 8:32, "1430" -> 14:30, "9" -> hour only (assume :00).
+    Only matches when the digits appear near a time-indicating word
+    ("at", "um") to avoid false positives on unrelated numbers.
+    """
+    t = text.lower()
+    m = re.search(r'\b(?:at|um)\s+(\d{1,4})\b', t)
+    if not m:
+        return None
+
+    digits = m.group(1)
+
+    if len(digits) <= 2:
+        hour, minute = int(digits), 0
+    elif len(digits) == 3:
+        hour, minute = int(digits[0]), int(digits[1:])
+    elif len(digits) == 4:
+        hour, minute = int(digits[:2]), int(digits[2:])
+    else:
+        return None
+
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+
+    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate < now:
+        candidate += timedelta(days=1)
+    return candidate
+
+
 def parse_trigger_datetime(text: str, now: datetime = None) -> datetime | None:
-    """
-    Parse natural language time expressions into a concrete datetime.
-    Handles: "in 20 minutes", "tomorrow at the same time", "after 3.5 hours",
-    "at 3:15 this afternoon", "next Tuesday at 11am", explicit times, etc.
-    Supports English and German.
-    """
+    
     if now is None:
         now = datetime.now()
 
     # "the same time [tomorrow]" needs special handling — dateparser doesn't
     # know what "the same time" refers to without context
     t = text.lower()
+
+    t = re.sub(r'(\d)\.(\d)', r'\1:\2', t)
+
+    # Catch STT squished times like "at 431" or "um 1430"
+    m = re.search(r'\b(?:at|um)\s+([012]?\d)([0-5]\d)\b', t)
+    if m:
+        hour = int(m.group(1))
+        minute = int(m.group(2))
+        parsed = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if parsed < now:
+            parsed += timedelta(days=1)
+        return parsed
+    
     if "same time" in t or "gleiche zeit" in t:
         if "tomorrow" in t or "morgen" in t:
             return now.replace(second=0, microsecond=0) + timedelta(days=1)
         return now.replace(second=0, microsecond=0)
+    
+    # Handle Whisper's bare-digit time transcriptions ("at 832" -> 8:32)
+    digit_run = _parse_digit_run_time(t, now)
+    if digit_run:
+        return digit_run
 
     # "after N(.N) hours" / "in N(.N) hours" — dateparser handles "in" well,
     # but decimal hours ("3.5 hours") sometimes need help

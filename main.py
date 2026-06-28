@@ -45,7 +45,7 @@ import peer_network
 from call_manager import CallSlot
 from live_call import LiveCall
 from reminders import start_reminder_loop, record_and_save_reminder, replay_last_reminder
-from handover import handle_handover_button, replay_last_handover, record_handover
+from handover import handle_handover_button, record_handover
 from translation import (
     play_audio_bytes, speak, translate_text, text_to_speech,
     transcribe_only, play_alert_beep, voice_to_text, t,
@@ -62,7 +62,6 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-LONG_PRESS_SECS = 3.0   # BTN_PLAY_MSG held ≥ this → language config mode
 
 _last_action_time: Dict[int, float] = {}
 DOUBLE_TAP_WINDOW = 2.0   # seconds
@@ -167,9 +166,14 @@ def _handle_incoming_voice_message(meta: dict, channel: str = "manager") -> None
     sender_role = meta.get("sender_role", "unknown")
     text        = meta.get("text",        "")
     language    = meta.get("language",    "en")
+    is_emergency = meta.get("is_emergency", False)
 
     if not text:
         log.warning("[MAIN] Empty voice message from '%s'.", sender_id)
+        return
+    
+    if is_emergency:
+        _handle_emergency_incoming(meta)
         return
 
     message_store.push(sender_id, sender_role, text, language, channel)
@@ -307,7 +311,6 @@ def _record_and_send(channel: str) -> None:
         speak(t("too_short_hold"), config.HELMET_LANGUAGE_CODE)
         return
 
-    speak(t("processing"), config.HELMET_LANGUAGE_CODE)
     text, detected_lang = transcribe_only(audio)
 
     if not text:
@@ -431,45 +434,83 @@ def _replay_last_message() -> None:
 
     play_audio_bytes(wav)
 
+def _play_or_replay_message() -> None:
+    """
+    Single tap: play the next unread message.
+    If there are no unread messages, fall back to replaying the last one heard.
+    """
+    msg = message_store.peek()
+    if msg is not None:
+        _play_next_message()
+        return
+
+    last = message_store.get_last_played()
+    if last is not None:
+        _replay_last_message()
+        return
+
+    lang_name = "English" if config.HELMET_LANGUAGE == "en" else "Deutsch"
+    speak(t("no_messages_lang", lang_name=lang_name), config.HELMET_LANGUAGE_CODE)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Button handler – PLAY message
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _handle_play_msg() -> None:
+TAP_WINDOW_SECS = 0.6   # max gap between taps to count as the same sequence
 
-    start = time.time()
+_play_tap_count = 0
+_play_tap_timer: threading.Timer | None = None
+_play_tap_lock = threading.Lock()
+
+
+def _dispatch_play_taps() -> None:
+    """Called once the tap window expires — acts on however many taps were counted."""
+    global _play_tap_count
+    with _play_tap_lock:
+        count = _play_tap_count
+        _play_tap_count = 0
+
+    if count == 1:
+        _play_or_replay_message()
+    else:
+        _handle_language_config()
+
+
+def _handle_play_msg() -> None:
+    """
+    PLAY button — short press only, no hold logic.
+    Counts taps within TAP_WINDOW_SECS, then dispatches once the window closes:
+      1 tap  → play next message, or replay last if none
+      2 taps → voice language configuration
+      long press → emergency broadcast to all
+    """
+    global _play_tap_count, _play_tap_timer
+
+    if _is_in_any_call():
+        return   # don't trigger any of this during an active call
+
+    start_time = time.time()
+    
+    # 1. HOLD LOGIC: Check if they hold it for 3 seconds FIRST
     while gpio.is_pressed(config.BTN_PLAY_MSG):
-        if time.time() - start >= _EMERGENCY_HOLD_SECS:
+        if time.time() - start_time >= 3.0:
+            log.info("[MAIN] 3-Second Hold Detected: Triggering Emergency.")
             _trigger_emergency()
-            gpio.wait_for_release(config.BTN_PLAY_MSG, max_seconds=10)
+            # Wait for them to let go so we don't accidentally count it as a tap later
+            while gpio.is_pressed(config.BTN_PLAY_MSG):
+                time.sleep(0.05)
             return
         time.sleep(0.05)
 
-    if _is_in_any_call():
-        return   # don't play messages during call
-    """
-    Double-tap (within 2s) → replay last played message.
-    Short press → play next message. 
-    Hold 3 s → voice language config.
-    """
+    with _play_tap_lock:
+        _play_tap_count += 1
 
-    if _is_double_tap(config.BTN_PLAY_MSG):
-        _replay_last_message()
-        gpio.wait_for_release(config.BTN_PLAY_MSG, max_seconds=2)
-        return
-    
-    start = time.time()
-    config_triggered = False
+        if _play_tap_timer is not None:
+            _play_tap_timer.cancel()
 
-    while gpio.is_pressed(config.BTN_PLAY_MSG):
-        if time.time() - start >= LONG_PRESS_SECS and not config_triggered:
-            config_triggered = True
-            _handle_language_config()
-            break
-        time.sleep(0.05)
-
-    if not config_triggered:
-        _play_next_message()
+        _play_tap_timer = threading.Timer(TAP_WINDOW_SECS, _dispatch_play_taps)
+        _play_tap_timer.daemon = True
+        _play_tap_timer.start()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -478,11 +519,14 @@ def _handle_play_msg() -> None:
 
 def _handle_language_config() -> None:
     speak(t("lang_setup_prompt"), config.HELMET_LANGUAGE_CODE)
+    time.sleep(0.5)
 
-    is_held = lambda: gpio.is_pressed(config.BTN_PLAY_MSG)
-    audio = record_until_release(is_held, max_seconds=5.0)
+    start_time = time.time()
+    hands_free_timer = lambda: (time.time() - start_time) < 2.0
+    
+    audio = record_until_release(hands_free_timer, max_seconds=2.0)
 
-    if not audio or len(audio) < config.CHUNK * 2:
+    if not audio or len(audio) < config.CHUNK * 2.0:
         speak(t("no_input_cancelled"), config.HELMET_LANGUAGE_CODE)
         return
 
@@ -504,66 +548,183 @@ def _handle_language_config() -> None:
           config.HELMET_LANGUAGE_CODE)
 
 
-_EMERGENCY_HOLD_SECS = 5.0   # hold Play button this long to trigger
-
 def _trigger_emergency() -> None:
-    """Send emergency alert and announce it locally."""
-    log.warning("[MAIN] EMERGENCY triggered by %s.", config.HELMET_ID)
-    speak("Emergency alert sent.", config.HELMET_LANGUAGE_CODE)
-    network.broadcast_emergency(config.HELMET_ID, config.HELMET_ROLE)
+    log.warning("[EMERGENCY] Triggered by %s.", config.HELMET_ID)
+    play_alert_beep(5)
+    led_handler.blink_alert(times=20, interval=0.08)
+    speak(t("emergency_prompt"), config.HELMET_LANGUAGE_CODE)
+    time.sleep(0.5)
+
+    is_held = lambda: gpio.is_pressed(config.BTN_PLAY_MSG)
+    audio = record_until_release(is_held)
+
+    custom_message = ""
+    if audio and len(audio) >= config.CHUNK * 2:
+        text, _ = transcribe_only(audio)
+        if text:
+            custom_message = text
+
+    if not custom_message:
+        custom_message = t("emergency_message")
+        log.warning("[EMERGENCY] No voice detected. Using default message.")
+        speak(t("not_understood_retry"), config.HELMET_LANGUAGE_CODE)
+    else:
+        log.info("[EMERGENCY] Custom message recorded: '%s'", custom_message)
+    
+    if config.HELMET_ROLE == "manager":
+        # The Manager blasts the message to every connected worker simultaneously.
+        sent = network.send_voice_message_to_all(custom_message, config.HELMET_LANGUAGE, is_emergency=True)
+        log.warning("[EMERGENCY] Broadcast sent to all %d connected worker(s).", sent)
+    else:
+        network.send_voice_message(custom_message, config.HELMET_LANGUAGE, is_emergency=True)
+        
+        peers_notified = 0
+        for wid, ip in config.WORKER_IPS.items():
+            if wid != config.HELMET_ID:  # Do not send the emergency to yourself
+                peer_network.send_voice_message_to_peer(
+                    ip, config.PEER_PORT,
+                    custom_message, config.HELMET_LANGUAGE, sender_id=config.HELMET_ID,
+                    is_emergency=True,
+                )
+                peers_notified += 1
+                
+        log.warning("[EMERGENCY] Broadcast sent to Manager and %d Peer Worker(s).", peers_notified)
 
 
 def _handle_emergency_incoming(meta: dict) -> None:
     """Play emergency alert when received from another helmet."""
     sender_id   = meta.get("sender_id", "unknown")
     sender_role = meta.get("sender_role", "unknown")
+    message     = meta.get("text", "")
+    src_lang    = meta.get("language", config.HELMET_LANGUAGE)
+
     label = sender_id if sender_role == "worker" else "manager"
     log.warning("[MAIN] EMERGENCY received from %s.", sender_id)
+    
     play_alert_beep(5)
-    speak(f"Emergency alert from {label}.", config.HELMET_LANGUAGE_CODE)
+    led_handler.blink_alert(times=20, interval=0.08)
+    speak(t("emergency_from", sender=label), config.HELMET_LANGUAGE_CODE)
+
+    if message:
+        my_lang = config.HELMET_LANGUAGE
+        
+        # Translate if the sender speaks a different language
+        if src_lang != my_lang:
+            translated_text = translate_text(message, src_lang, my_lang)
+        else:
+            translated_text = message
+            
+        audio = text_to_speech(translated_text, _lang_code(my_lang))
+        play_audio_bytes(audio)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Other button handlers
 # ─────────────────────────────────────────────────────────────────────────────
+_play_tap_count = 0
+_play_tap_timer: threading.Timer | None = None
+_play_tap_lock = threading.Lock()
+
+def _dispatch_reminder_taps() -> None:
+    """Called once the tap window expires for the Reminder button."""
+    global _play_tap_count
+    with _play_tap_lock:
+        count = _play_tap_count
+        _play_tap_count = 0
+
+    # Whether they tap it once, or double-tap it, just replay the last reminder!
+    if count >= 1:
+        log.info("[MAIN] Tap detected: Replay Reminder.")
+        replay_last_reminder()
+
 
 def _handle_reminder() -> None:
+
+    global _play_tap_count, _play_tap_timer
 
     if _is_in_any_call():
         return   # don't play stored messages over live call audio
 
-    """Double-tap (within 2s) → replay last triggered reminder. Otherwise record a new one."""
+    start_time = time.time()
 
-    if _is_double_tap(config.BTN_REMINDER):
-        replay_last_reminder()
-        gpio.wait_for_release(config.BTN_REMINDER, max_seconds=2)
-        return
-    
-    is_held = lambda: gpio.is_pressed(config.BTN_REMINDER)
-    record_and_save_reminder(is_held)
-
-
-def _handle_handover() -> None:
-    """
-    Double-tap → replay last handover (no state change).
-    Long hold  → record / overwrite handover.
-    Short press→ play unplayed handover, or re-play last if already heard.
-    """
-    if _is_double_tap(config.BTN_HANDOVER):
-        replay_last_handover()
-        gpio.wait_for_release(config.BTN_HANDOVER, max_seconds=2)
-        return
-
-    # Detect long hold vs short press
-    start = time.time()
-    while gpio.is_pressed(config.BTN_HANDOVER):
-        if time.time() - start >= LONG_PRESS_SECS:
-            is_held = lambda: gpio.is_pressed(config.BTN_HANDOVER)
-            record_handover(is_held)
+    # 1. HOLD LOGIC: Check if they hold it for 3 seconds FIRST
+    while gpio.is_pressed(config.BTN_REMINDER):
+        if time.time() - start_time >= 1.5:
+            log.info("[MAIN] 1.5-Second Hold Detected: Recording Reminder.")
+            # Pass the lambda so it keeps recording until they physically let go
+            is_held = lambda: gpio.is_pressed(config.BTN_REMINDER)
+            record_and_save_reminder(is_held)
+            
+            # Wait for them to let go so we don't accidentally count it as a tap later
+            while gpio.is_pressed(config.BTN_REMINDER):
+                time.sleep(0.05)
             return
         time.sleep(0.05)
 
-    # Short press
-    handle_handover_button(lambda: gpio.is_pressed(config.BTN_HANDOVER))
+    # 2. TAP LOGIC: If they let go before 1.5 seconds, it's a short tap.
+    with _play_tap_lock:
+        _play_tap_count += 1
+
+        if _play_tap_timer is not None:
+            _play_tap_timer.cancel()
+
+        # Uses your standard TAP_WINDOW_SECS (e.g., 0.6 seconds)
+        _play_tap_timer = threading.Timer(TAP_WINDOW_SECS, _dispatch_reminder_taps)
+        _play_tap_timer.daemon = True
+        _play_tap_timer.start()
+
+
+def _handle_handover() -> None:
+  
+    """
+    HANDOVER button:
+    - 3s Hold: Record new handover
+    - 1 Tap: Play unplayed handover
+    - 2 Taps: Replay last recorded handover
+    """
+    global _play_tap_count, _play_tap_timer
+
+    if _is_in_any_call():
+        return   # don't trigger any of this during an active call
+
+    start_time = time.time()
+
+    # 1. HOLD LOGIC: Check if they hold it for 1.5 seconds FIRST
+    while gpio.is_pressed(config.BTN_HANDOVER):
+        if time.time() - start_time >= 1.5:
+            log.info("[MAIN] 1.5-Second Hold Detected: Recording Handover.")
+            # Pass the lambda so it keeps recording until they physically let go
+            is_held = lambda: gpio.is_pressed(config.BTN_HANDOVER)
+            record_handover(is_held)
+            
+            # Wait for them to let go so we don't accidentally count it as a tap
+            while gpio.is_pressed(config.BTN_HANDOVER):
+                time.sleep(0.05)
+            return
+        time.sleep(0.05)
+
+    # 2. TAP LOGIC: If they let go before 3 seconds, it's a short tap.
+    with _play_tap_lock:
+        _play_tap_count += 1
+
+        if _play_tap_timer is not None:
+           _play_tap_timer.cancel()
+
+        _play_tap_timer = threading.Timer(TAP_WINDOW_SECS, _dispatch_handover_taps)
+        _play_tap_timer.daemon = True
+        _play_tap_timer.start()
+
+
+def _dispatch_handover_taps() -> None:
+    """Called once the tap window expires for the Handover button."""
+    global _play_tap_count
+    with _play_tap_lock:
+        count = _play_tap_count
+        _play_tap_count = 0
+
+    # Whether they tap it once, or accidentally double-tap it, just play the note!
+    if count >= 1:
+        log.info("[MAIN] Tap detected: Play Handover.")
+        handle_handover_button()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

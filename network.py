@@ -251,13 +251,14 @@ def start_server(port: int, on_message) -> None:
     threading.Thread(target=_serve, name="net-server", daemon=True).start()
 
 
-def send_voice_message_to(worker_id: str, text: str, language: str) -> bool:
+def send_voice_message_to(worker_id: str, text: str, language: str, is_emergency: bool = False) -> bool:
     """(Manager) Send a text voice message to a specific worker."""
     meta = {
         "sender_id":   config.HELMET_ID,
         "sender_role": "manager",
         "text":        text,
         "language":    language,
+        "is_emergency": is_emergency,
         "timestamp":   _time.time(),
     }
     with _workers_lock:
@@ -269,7 +270,7 @@ def send_voice_message_to(worker_id: str, text: str, language: str) -> bool:
     return _send_frame(sock, MSG_VOICE_MESSAGE, b"", meta)
 
 
-def send_voice_message_to_all(text: str, language: str) -> int:
+def send_voice_message_to_all(text: str, language: str, is_emergency: bool = False) -> int:
     """(Manager) Broadcast a text voice message to ALL connected workers."""
     import time as _time
     meta = {
@@ -277,6 +278,7 @@ def send_voice_message_to_all(text: str, language: str) -> int:
         "sender_role": "manager",
         "text":        text,
         "language":    language,
+        "is_emergency": is_emergency,
         "timestamp":   _time.time(),
     }
     with _workers_lock:
@@ -375,7 +377,7 @@ def send_audio(audio_bytes: bytes, meta: Optional[dict] = None) -> bool:
     return _send_frame(_manager_sock, MSG_TRANSLATION, audio_bytes, meta)
 
 
-def send_voice_message(text: str, language: str) -> bool:
+def send_voice_message(text: str, language: str, is_emergency: bool = False) -> bool:
     """(Worker) Send a text voice message to the manager."""
     import time as _time
     if _manager_sock is None:
@@ -386,6 +388,7 @@ def send_voice_message(text: str, language: str) -> bool:
         "sender_role": "worker",
         "text":        text,
         "language":    language,
+        "is_emergency": is_emergency,
         "timestamp":   _time.time(),
     }
     log.info("[NET] Voice msg to manager: '%s' (%s)", text[:40], language)

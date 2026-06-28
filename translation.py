@@ -58,8 +58,6 @@ _PROMPTS = {
                               "de": "Aufnahme läuft."},
     "too_short_hold":        {"en": "Too short. Hold while speaking.",
                               "de": "Zu kurz. Halten Sie die Taste beim Sprechen."},
-    "processing":            {"en": "Processing.",
-                              "de": "Verarbeitung läuft."},
     "not_understood_retry":  {"en": "Could not understand. Please try again.",
                               "de": "Nicht verstanden. Bitte erneut versuchen."},
     "message_sent":          {"en": "Message sent.",
@@ -70,6 +68,10 @@ _PROMPTS = {
                               "de": "Kein Arbeiter ausgewählt. Drücken Sie 1, 2."},
     "manager_disconnected": {"en": "Manager disconnected.",
                          "de": "Manager hat die Verbindung getrennt."},
+    "no_message_to_replay":  {"en": "No message.",
+                              "de": "Keine Nachricht."},
+    "replaying_from_sender": {"en": "Replaying. From {sender}: {preview}",
+                              "de": "Wiederholung. Von {sender}: {preview}"},
 
     # Mute
     "muted":                 {"en": "Muted.", "de": "Stummgeschaltet."},
@@ -78,7 +80,6 @@ _PROMPTS = {
                               "de": "Bereits in einem Anruf."},
 
     # Play message
-    "no_messages":           {"en": "No messages.", "de": "Keine Nachrichten."},
     "no_messages_lang":      {"en": "No messages. Currently set to {lang_name}.",
                               "de": "Keine Nachrichten. Aktuell eingestellt auf {lang_name}."},
     "from_sender":           {"en": "From {sender}: {preview}",
@@ -87,22 +88,27 @@ _PROMPTS = {
                               "de": "{n} Nachricht{plural_de} verbleibend."},
     "no_more_messages":      {"en": "No more messages.",
                               "de": "Keine weiteren Nachrichten."},
+    
+    "emergency_prompt":      {"en": "Emergency. Keep holding to record message.",
+                              "de": "Notfall. Halten Sie die Taste für eine Nachricht gedrückt."},
+    "emergency_message":     {"en": "Emergency. Please respond immediately.",
+                              "de": "Notfall. Bitte sofort antworten."},
+    "emergency_from":        {"en": "Emergency alert from {sender}.",
+                              "de": "Notfallalarm von {sender}."},
 
     # Language config
     "lang_setup_prompt":     {"en": "Language setup. Say English or German.",
                               "de": "Spracheinrichtung. Sagen Sie English oder Deutsch."},
-    "lang_setup_prompt_de":  {"en": "Language setup, say in German too.",
-                              "de": "Sprachauswahl. Sagen Sie Englisch oder Deutsch."},
     "no_input_cancelled":    {"en": "No input detected. Configuration cancelled.",
                               "de": "Keine Eingabe erkannt. Konfiguration abgebrochen."},
-    "lang_not_understood":   {"en": "Could not understand. Say English or German.",
-                              "de": "Nicht verstanden. Sagen Sie English oder Deutsch."},
-    "configured_en":         {"en": "Configured for English.", "de": "Configured for English."},
-    "configured_de":         {"en": "Konfiguriert für Deutsch.", "de": "Konfiguriert für Deutsch."},
+    "lang_not_understood":   {"en": "Could not understand. Please try again.",
+                              "de": "Nicht verstanden. Bitte versuchen Sie es erneut.."},
+    "configured_en":         {"en": "Configured for English."},
+    "configured_de":         {"en": "Konfiguriert für Deutsch."},
 
     # Calls
-    "incoming_call":         {"en": "Incoming call from {partner}. Press call button to answer.",
-                              "de": "Eingehender Anruf von {partner}. Drücken Sie die Anruftaste zum Annehmen."},
+    "incoming_call":         {"en": "Incoming call from {partner}.",
+                              "de": "Eingehender Anruf von {partner}."},
     "call_connected":        {"en": "Call connected.", "de": "Anruf verbunden."},
     "call_ended":            {"en": "Call ended.", "de": "Anruf beendet."},
     "call_not_answered":     {"en": "Call not answered.", "de": "Anruf nicht beantwortet."},
@@ -111,52 +117,30 @@ _PROMPTS = {
     "call_cancelled":        {"en": "Call cancelled.", "de": "Anruf abgebrochen."},
 
     # Handover
-    "handover_playing":      {"en": "Playing handover message.",
+    "handover_playing":      {"en": "Playing handover note.",
                               "de": "Übergabenachricht wird abgespielt."},
-    "handover_end":          {"en": "End of handover message.",
-                              "de": "Ende der Übergabenachricht."},
-    "handover_prompt":       {"en": "Hold the button and record your handover. "
-                                      "Say your name, zone, and your message.",
-                              "de": "Halten Sie die Taste und nehmen Sie Ihre Übergabe auf. "
-                                      "Nennen Sie Ihren Namen, Ihre Zone und Ihre Nachricht."},
-    "handover_too_short":    {"en": "Recording too short. Handover not saved.",
-                              "de": "Aufnahme zu kurz. Übergabe nicht gespeichert."},
-    "handover_processing":   {"en": "Processing handover.",
-                              "de": "Übergabe wird verarbeitet."},
-    "handover_not_understood":{"en": "Could not understand. Handover not saved.",
-                              "de": "Nicht verstanden. Übergabe nicht gespeichert."},
-    "handover_saved":        {"en": "Handover message saved.",
-                              "de": "Übergabenachricht gespeichert."},
+    "handover_prompt":       {"en": "Handover recording",
+                              "de": "Aufzeichnung der Übergabenotiz"},
+    "handover_too_short":    {"en": "Recording too short. Please try again.",
+                              "de": "Aufnahme zu kurz. Bitte versuchen Sie es erneut."},
+    "handover_not_understood":{"en": "Could not understand. Please try again.",
+                              "de": "Nicht verstanden. Bitte versuchen Sie es erneut."},
+    "handover_saved":        {"en": "Handover note saved.",
+                              "de": "Übergabenotiz gespeichert."},
+    "no_handover_to_replay": {"en": "No handover to play.",
+                              "de": "Keine Übergabe zum Abspielen."},
 
     # Reminders
-    "reminder_prompt":       {"en": "Hold the button and record your reminder.",
-                              "de": "Halten Sie die Taste und nehmen Sie Ihre Erinnerung auf."},
+    "reminder_prompt":       {"en": "Reminder recording",
+                              "de": "Erinnerung wird aufgenommen"},
     "reminder_too_short":    {"en": "Recording too short. Please try again.",
                               "de": "Aufnahme zu kurz. Bitte erneut versuchen."},
-    "reminder_processing":   {"en": "Processing reminder.",
-                              "de": "Erinnerung wird verarbeitet."},
-    "reminder_no_time":      {"en": "No time found in your message. Please include a "
-                                      "time, for example: at 14 30.",
-                              "de": "Keine Uhrzeit erkannt. Bitte geben Sie eine Uhrzeit "
-                                      "an, zum Beispiel: 14 Uhr 30."},
+    "reminder_no_time":      {"en": "No time found in your message. Please try again",
+                              "de": "Keine Uhrzeit erkannt. Bitte erneut versuchen."},
     "reminder_saved":        {"en": "Reminder saved for {time}.",
                               "de": "Erinnerung gespeichert für {time}."},
     "reminder_label":        {"en": "Reminder:", "de": "Erinnerung:"},
-
-    "no_message_to_replay":  {"en": "No message to replay.",
-                          "de": "Keine Nachricht zum Wiederholen."},
-
-    "replaying_from_sender": {"en": "Replaying. From {sender}: {preview}",
-                            "de": "Wiederholung. Von {sender}: {preview}"},
-
-    "no_handover_to_replay": {"en": "No handover to replay.",
-                            "de": "Keine Übergabe zum Wiederholen."},
-
-    "handover_replaying":    {"en": "Replaying handover message.",
-                            "de": "Übergabenachricht wird wiederholt."},
-                            
-    "no_reminder_to_replay": {"en": "No reminder to replay.",
-                            "de": "Keine Erinnerung zum Wiederholen."},
+    
 }
 
 
