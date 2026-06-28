@@ -297,6 +297,9 @@ def _record_and_send(channel: str) -> None:
            else config.BTN_SPEAK_WORKER)
 
     speak(t("recording"), config.HELMET_LANGUAGE_CODE)
+
+    time.sleep(0.5)
+    
     is_held = lambda: gpio.is_pressed(pin)
     audio = record_until_release(is_held)
 

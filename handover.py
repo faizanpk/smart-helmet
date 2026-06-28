@@ -10,6 +10,7 @@
 #   Double-tap   → REPLAY the last handover regardless of played state
 
 import logging
+import time
 from datetime import datetime
 
 import config
@@ -86,6 +87,8 @@ def record_handover(is_held_fn) -> None:
     """
     speak(t("handover_prompt"), config.HELMET_LANGUAGE_CODE)
 
+    time.sleep(0.5)
+    
     audio = record_until_release(is_held_fn, max_seconds=config.RECORD_SECONDS_MAX)
 
     if len(audio) < config.CHUNK * 2:

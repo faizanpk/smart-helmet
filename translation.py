@@ -280,22 +280,34 @@ def record_until_release(is_held_fn, max_seconds: float = None) -> bytes:
         max_seconds = config.RECORD_SECONDS_MAX
 
     p = pyaudio.PyAudio()
+    
+    # 1. Bypass PyAudio's default device bug and target the physical hardware directly.
     input_idx = None
     if platform.system() == "Linux":
-        input_idx = _find_pyaudio_device(p, config.ALSA_MIC_DEVICE, is_input=True)
+        for i in range(p.get_device_count()):
+            info = p.get_device_info_by_index(i)
+            # Look for the Google VoiceHAT hardware we verified in 'arecord -l'
+            if "Google" in info.get("name", "") or "sndrpi" in info.get("name", ""):
+                if info.get("maxInputChannels", 0) > 0:
+                    input_idx = i
+                    break
+
+    # Ask config.py what physical hardware we are running on
+    hw_rate = getattr(config, "HW_MIC_RATE", config.SAMPLE_RATE)
+    hw_format = pyaudio.paInt32 if hw_rate == 48000 else pyaudio.paInt16
 
     stream = p.open(
-        format=pyaudio.paInt16,
+        format=hw_format,
         channels=config.CHANNELS,
-        rate=config.SAMPLE_RATE,
+        rate=hw_rate,
         input=True,
         input_device_index=input_idx,
         frames_per_buffer=config.CHUNK,
     )
 
-    log.info("[MIC] Recording started.")
+    log.info("[MIC] Recording started (Hardware Rate: %d Hz, Device ID: %s).", hw_rate, str(input_idx))
     frames = []
-    max_chunks = int(config.SAMPLE_RATE / config.CHUNK * max_seconds)
+    max_chunks = int(hw_rate / config.CHUNK * max_seconds)
 
     for _ in range(max_chunks):
         if not is_held_fn():
@@ -307,9 +319,19 @@ def record_until_release(is_held_fn, max_seconds: float = None) -> bytes:
     stream.close()
     p.terminate()
 
-    duration = len(frames) * config.CHUNK / config.SAMPLE_RATE
+    raw_bytes = b"".join(frames)
+    
+    # 2. Down-sample 48kHz back to 16kHz for Whisper
+    if hw_rate == 48000:
+        audio_np = np.frombuffer(raw_bytes, dtype=np.int32)
+        audio_16 = (audio_np >> 16).astype(np.int16)
+        final_bytes = audio_16[::3].tobytes()
+    else:
+        final_bytes = raw_bytes
+
+    duration = len(final_bytes) / 2 / config.SAMPLE_RATE
     log.info("[MIC] Recording stopped – %.1f s.", duration)
-    return b"".join(frames)
+    return final_bytes
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -126,6 +126,8 @@ def save_reminder(message: str, trigger_dt: datetime) -> None:
 def record_and_save_reminder(is_held_fn) -> None:
     speak(t("reminder_prompt"), config.HELMET_LANGUAGE_CODE)
 
+    time.sleep(0.5)
+    
     audio = record_until_release(is_held_fn, max_seconds=config.RECORD_SECONDS_MAX)
 
     if len(audio) < config.CHUNK * 2:
