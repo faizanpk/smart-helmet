@@ -38,7 +38,7 @@ def _get_unplayed_handover() -> dict | None:
     row = conn.execute(
         """SELECT id, message, timestamp, language
            FROM handover
-           WHERE played = 0
+           WHERE played_by = 0
            ORDER BY id DESC LIMIT 1"""
     ).fetchone()
     conn.close()
@@ -107,8 +107,8 @@ def record_handover(is_held_fn) -> None:
     # Delete all previous handovers on this device — only one active note at a time
     conn.execute("DELETE FROM handover")
     conn.execute(
-        """INSERT INTO handover (message, timestamp, played, language, sender_role)
-           VALUES (?, ?, 0, ?, ?)""",
+        """INSERT INTO handover (message, timestamp, language, sender_role)
+           VALUES (?, ?, ?, ?)""",
         (text, timestamp, recorded_lang, config.HELMET_ROLE),
     )
     conn.commit()

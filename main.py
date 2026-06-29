@@ -739,8 +739,8 @@ def _start_manager_keyboard_hooks() -> None:
     import keyboard as _kb
 
     _f_workers = {
-        "f1": "w-01",
-        "f2": "w-02",
+        "f1": "worker 1",
+        "f2": "worker 2",
     }
 
     def _on_key(event):

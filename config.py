@@ -61,12 +61,12 @@ PARTNER_IP = MANAGER_IP
 
 # ─── Network – Workers (manager needs each worker's IP to call/message them) ──
 WORKER_IPS = {
-    "w-01": "192.168.43.138",      # Raspberry Pi worker
-    "w-02": "192.168.43.145",      # Laptop worker
+    "worker 1": "192.168.43.138",      # Raspberry Pi worker
+    "worker 2": "192.168.43.145",      # Laptop worker
 }
 PEER_PORT      = 5007             # TCP port: worker ↔ worker
 
-_FIXED_WORKER_ORDER = ["w-01", "w-02"]
+_FIXED_WORKER_ORDER = ["worker 1", "worker 2"]
 
 # ─── Live Call ────────────────────────────────────────────────────────────────
 LIVE_CALL_PORT = 5006             # UDP port for full-duplex intercom
@@ -91,8 +91,8 @@ BTN_SPEAK = BTN_SPEAK_MANAGER
 # Port offset for LiveCall UDP: 0 = w-01, 2 = w-02
 # Keeps manager↔w-01 on ports 5006/5007 and manager↔w-02 on 5008/5009
 CALL_PORT_OFFSETS = {
-    "w-01": 0,
-    "w-02": 2,
+    "worker 1": 0,
+    "worker 2": 2,
 }
 
 # ─── Laptop Keyboard Simulation ───────────────────────────────────────────────────────────
