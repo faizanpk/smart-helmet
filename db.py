@@ -73,7 +73,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS handover (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             sender_name TEXT,               -- parsed from speech or config
-            sender_id   TEXT,               -- "worker 1" | "worker 2" | "manager"
+            sender_id   TEXT,               -- "w-01" | "w-02" | "manager"
             sender_role TEXT    NOT NULL,   -- "manager" | "worker"
             zone        TEXT,               -- location / zone on site
             message     TEXT    NOT NULL,   -- full transcribed text

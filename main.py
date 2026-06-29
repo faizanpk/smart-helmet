@@ -739,8 +739,8 @@ def _start_manager_keyboard_hooks() -> None:
     import keyboard as _kb
 
     _f_workers = {
-        "f1": "worker 1",
-        "f2": "worker 2",
+        "f1": "w-01",
+        "f2": "w-02",
     }
 
     def _on_key(event):
@@ -817,7 +817,7 @@ def main() -> None:
     if config.HELMET_ROLE == "manager":
         for wid in ("w-01", "w-02"):
             offset = config.CALL_PORT_OFFSETS.get(wid, 0)
-            label  = "worker 1" if wid == "w-01" else "worker 2"
+            label  = "w-01" if wid == "w-01" else "w-02"
 
             def _factory(partner_ip, _offset=offset):
                 return _make_live_call(partner_ip, _offset)
