@@ -159,6 +159,7 @@ GPIO pin  ────────┤ Button ├──────── GND
 | **Play Message** (press or hold) | GPIO 25 | Pin 22 | Pin 25 |
 | **Reminder** (hold to record) | GPIO 27 | Pin 13 | Pin 14 |
 | **Handover** (press) | GPIO 22 | Pin 15 | Pin 14 |
+| **Loudspeaker Mode** (toggle switch) | GPIO 26 | Pin 37 | Pin 39 |
 
 > **Tip:** Run one jumper wire from any GND pin (e.g. Pin 14) to a breadboard ground rail. Then connect all the button GND legs to that shared rail — saves wiring.
 
@@ -234,6 +235,7 @@ Pi USB-C port (power input)
 │  Pin 30 (GND)  ──────────────────────────── [LED cathode / GND rail] │
 │  Pin 35 (GPIO19) ──────────────────────────┬ SPH0645 LRCL            │
 │                                             └ MAX98357A LRC           │
+│  Pin 37 (GPIO26) ──[SW: Loudspeaker]──────── GND rail                 │
 │  Pin 38 (GPIO20) ──────────────────────────── SPH0645 DOUT           │
 │  Pin 40 (GPIO21) ──────────────────────────── MAX98357A DIN          │
 │                                                                        │
@@ -349,10 +351,13 @@ When a worker connects, the manager hears *"Worker 1 connected."*
 | Hold **SPACE** | Record and send voice message to selected worker |
 | **F1** | Call / answer / hang up — Worker A (Pi) |
 | **F2** | Call / answer / hang up — Worker B (Laptop 2) |
-| **P** (short press) | Play next received message |
-| Hold **P** for 3 sec | Set language by voice |
+| **P** (1 tap) | Play next received message |
+| **P** (2 taps) | Set language by voice |
+| Hold **P** | Record and trigger emergency broadcast to all |
+| **R** (1 tap) | Replay reminder |
 | Hold **R** | Record a reminder |
-| **H** | Record or play back shift handover |
+| **H** (1 tap) | Play/replay shift handover |
+| Hold **H** | Record shift handover |
 | Hold **SPACE** during a call | Mute yourself (release to unmute) |
 
 ### Worker A — Raspberry Pi (physical buttons)
@@ -362,10 +367,13 @@ When a worker connects, the manager hears *"Worker 1 connected."*
 | Hold **GPIO 17** (Pin 11) | Record and send voice message to manager |
 | Hold **GPIO 24** (Pin 18) | Record and send voice message to the other worker |
 | Press **GPIO 23** (Pin 16) | Call / answer / hang up — manager |
-| Press **GPIO 25** (Pin 22) | Play next received message |
-| Hold **GPIO 25** (Pin 22) for 3 sec | Set language by voice |
+| Press **GPIO 25** (Pin 22) 1 time | Play next received message |
+| Press **GPIO 25** (Pin 22) 2 times | Set language by voice |
+| Hold **GPIO 25** (Pin 22) | Record and trigger emergency broadcast to all |
+| Press **GPIO 27** (Pin 13) 1 time | Replay reminder |
 | Hold **GPIO 27** (Pin 13) | Record a reminder |
-| Press **GPIO 22** (Pin 15) | Record or play back shift handover |
+| Press **GPIO 22** (Pin 15) 1 time | Play/replay shift handover |
+| Hold **GPIO 22** (Pin 15) | Record shift handover |
 | Hold **GPIO 17** during a call | Mute yourself (release to unmute) |
 
 ### Worker B — Laptop 2 (keyboard)
@@ -375,10 +383,13 @@ When a worker connects, the manager hears *"Worker 1 connected."*
 | Hold **SPACE** | Record and send voice message to manager |
 | Hold **W** | Record and send voice message to the other worker |
 | **C** | Call / answer / hang up — manager |
-| **P** (short press) | Play next received message |
-| Hold **P** for 3 sec | Set language by voice |
+| **P** (1 tap) | Play next received message |
+| **P** (2 taps) | Set language by voice |
+| Hold **P** | Record and trigger emergency broadcast to all |
+| **R** (1 tap) | Replay reminder |
 | Hold **R** | Record a reminder |
-| **H** | Record or play back shift handover |
+| **H** (1 tap) | Play/replay shift handover |
+| Hold **H** | Record shift handover |
 | Hold **SPACE** during a call | Mute yourself (release to unmute) |
 
 ---
@@ -408,7 +419,7 @@ When a message arrives the receiver hears 3 beeps + TTS: *"1 message received. P
 On the Pi, the LED also blinks rapidly.
 
 **To play:**
-1. Press **P** (or GPIO 25 on Pi).
+1. Tap **P** (or GPIO 25 on Pi) once.
 2. You hear a short preview: *"From manager: Please check the..."*
 3. The full message plays in your configured language. If the sender spoke a different language it is automatically translated.
 4. LED turns off when all messages are played.
@@ -448,9 +459,9 @@ Only manager ↔ worker. Workers cannot call each other.
 
 ### 8.4 Setting the Language
 
-1. Hold **P** (or GPIO 25) for **3 full seconds**.
+1. Tap **P** (or GPIO 25) **twice**.
 2. *"Language setup. Say English or German."*
-3. While still holding, say **"English"** or **"German"**.
+3. Say **"English"** or **"German"**.
 4. Release. *"Configured for English."* or *"Konfiguriert für Deutsch."*
 
 Saved automatically and reloaded on every boot.
@@ -459,18 +470,40 @@ Saved automatically and reloaded on every boot.
 
 ### 8.5 Reminders
 
+**Record a reminder:**
 1. Hold **R** and speak: *"Check pressure valve in 20 minutes."*
 2. Release. The system saves it and plays it automatically at the right time.
+
+**Replay a reminder:**
+1. Tap **R** once.
 
 ---
 
 ### 8.6 Shift Handover
 
-**End of shift (recording):** Hold **H** and speak your notes. Release to save.
+**End of shift (recording):** Hold **H** (or GPIO 22) and speak your notes. Release to save.
 
-**Start of shift (playback):** Press **H** briefly — the previous shift's notes play back.
+**Start of shift (playback):** Tap **H** (or GPIO 22) once — the previous shift's notes or the last recorded notes play back.
 
 ---
+
+### 8.7 Emergency Broadcast
+
+Hold **P** (or GPIO 25) to record and broadcast a priority emergency alert to all helmets. Release to send.
+
+---
+
+### 8.8 Loudspeaker Mode (External Speaker)
+
+When you take the helmet off, you can route all audio to a loud external USB speaker. 
+
+**Hardware Setup:**
+1. Plug an external USB speaker into one of the Pi's USB ports. 
+2. Wire a physical **Toggle Switch** between **GPIO 26 (Pin 37)** and **GND (Pin 39)**.
+
+**How to use:**
+*   **Switch ON (Closed):** Loudspeaker Mode. All incoming messages, calls, and TTS announcements will play through the loud external USB speaker. 
+*   **Switch OFF (Open):** Normal Mode. Audio plays securely through the helmet's internal I2S speaker.
 
 ## 9. LED Indicator (Pi only)
 

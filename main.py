@@ -387,7 +387,6 @@ def _play_next_message() -> None:
 
     sender_label = msg["sender_role"].capitalize()
     preview = _preview_text(msg["text"], max_words=6)
-    speak(t("from_sender", sender=sender_label, preview=preview), config.HELMET_LANGUAGE_CODE)
 
     my_lang  = config.HELMET_LANGUAGE
     src_lang = msg["language"]
@@ -419,8 +418,6 @@ def _replay_last_message() -> None:
 
     sender_label = msg["sender_role"].capitalize()
     preview = _preview_text(msg["text"], max_words=6)
-    speak(t("replaying_from_sender", sender=sender_label, preview=preview),
-          config.HELMET_LANGUAGE_CODE)
 
     my_lang  = config.HELMET_LANGUAGE
     src_lang = msg["language"]
