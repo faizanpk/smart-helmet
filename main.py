@@ -185,7 +185,7 @@ def _handle_incoming_voice_message(meta: dict, channel: str = "manager") -> None
 
     n = message_store.count()
     speak(t("n_messages_received", n=n), config.HELMET_LANGUAGE_CODE)
-
+    
 
 def _on_network_message(msg_type: str, meta: dict, payload: bytes) -> None:
     """Dispatch incoming TCP messages (manager server ↔ worker client)."""

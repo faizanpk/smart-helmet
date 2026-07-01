@@ -12,6 +12,7 @@
 import os
 import json
 import math
+import time
 import io
 import platform
 import struct
@@ -260,61 +261,61 @@ def _find_pyaudio_device(p: pyaudio.PyAudio, alsa_name: str, is_input: bool):
 
 def record_until_release(is_held_fn, max_seconds: float = None) -> bytes:
     """Capture raw LINEAR16 PCM while is_held_fn() returns True."""
+        
     if max_seconds is None:
         max_seconds = config.RECORD_SECONDS_MAX
 
-    p = pyaudio.PyAudio()
+    log.info("[MIC] Recording started via ALSA arecord on %s (32-bit mode)...", config.ALSA_MIC_DEVICE)
     
-    # 1. Bypass PyAudio's default device bug and target the physical hardware directly.
-    input_idx = None
-    if platform.system() == "Linux":
-        for i in range(p.get_device_count()):
-            info = p.get_device_info_by_index(i)
-            # Look for the Google VoiceHAT hardware we verified in 'arecord -l'
-            if "Google" in info.get("name", "") or "sndrpi" in info.get("name", ""):
-                if info.get("maxInputChannels", 0) > 0:
-                    input_idx = i
-                    break
+    # Create a temporary file to prevent the 64KB pipe buffer from overflowing
+    with tempfile.NamedTemporaryFile(suffix=".raw", delete=False) as f:
+        tmp_path = f.name
+        
+    cmd = [
+        "arecord",
+        "-D", config.ALSA_MIC_DEVICE,
+        "-f", "S32_LE",                 # Raw 32-bit frames
+        "-r", "48000",                  # Native I2S hardware rate
+        "-c", "1",                      # Mono
+        "-t", "raw",                    
+        "-q",
+        tmp_path                        # Write directly to disk
+    ]
 
-    # Ask config.py what physical hardware we are running on
-    hw_rate = getattr(config, "HW_MIC_RATE", config.SAMPLE_RATE)
-    hw_format = pyaudio.paInt32 if hw_rate == 48000 else pyaudio.paInt16
-
-    stream = p.open(
-        format=hw_format,
-        channels=config.CHANNELS,
-        rate=hw_rate,
-        input=True,
-        input_device_index=input_idx,
-        frames_per_buffer=config.CHUNK,
-    )
-
-    log.info("[MIC] Recording started (Hardware Rate: %d Hz, Device ID: %s).", hw_rate, str(input_idx))
-    frames = []
-    max_chunks = int(hw_rate / config.CHUNK * max_seconds)
-
-    for _ in range(max_chunks):
-        if not is_held_fn():
-            break
-        data = stream.read(config.CHUNK, exception_on_overflow=False)
-        frames.append(data)
-
-    stream.stop_stream()
-    stream.close()
-    p.terminate()
-
-    raw_bytes = b"".join(frames)
+    process = subprocess.Popen(cmd)
     
-    # 2. Down-sample 48kHz back to 16kHz for Whisper
-    if hw_rate == 48000:
-        audio_np = np.frombuffer(raw_bytes, dtype=np.int32)
-        audio_16 = (audio_np >> 16).astype(np.int16)
-        final_bytes = audio_16[::3].tobytes()
-    else:
-        final_bytes = raw_bytes
-
+    start_time = time.time()
+    while is_held_fn() and (time.time() - start_time) < max_seconds:
+        time.sleep(0.05)
+        
+    process.terminate()
+    try:
+        process.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        process.kill()
+    
+    # Read the audio from the temporary file
+    with open(tmp_path, "rb") as f:
+        raw_bytes = f.read()
+        
+    try:
+        os.unlink(tmp_path)
+    except OSError:
+        pass
+    
+    if not raw_bytes:
+        return b""
+        
+    # --- The SPH0645 Fix ---
+    audio_np = np.frombuffer(raw_bytes, dtype=np.int32)
+    # Shift right by 16 bits to drop the empty zero-padding
+    audio_16 = (audio_np >> 16).astype(np.int16)
+    # Downsample from 48000 Hz to 16000 Hz for Whisper
+    final_bytes = audio_16[::3].tobytes()
+    
     duration = len(final_bytes) / 2 / config.SAMPLE_RATE
     log.info("[MIC] Recording stopped – %.1f s.", duration)
+    
     return final_bytes
 
 
@@ -486,8 +487,8 @@ def play_audio_bytes(wav_bytes: bytes) -> None:
             else:
                 device = speaker_mode.get_speaker_device()
                 cmd = ["aplay", "--quiet"]
-                if config.ALSA_SPK_DEVICE:
-                    cmd += ["-D", config.ALSA_SPK_DEVICE]
+                if device:
+                    cmd += ["-D", device]
                 cmd.append(tmp_path)
                 subprocess.run(cmd, check=True)
         except Exception as exc:
