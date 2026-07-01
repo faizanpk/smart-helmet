@@ -259,64 +259,99 @@ def _find_pyaudio_device(p: pyaudio.PyAudio, alsa_name: str, is_input: bool):
     return None
 
 
-def record_until_release(is_held_fn, max_seconds: float = None) -> bytes:
-    """Capture raw LINEAR16 PCM while is_held_fn() returns True."""
-        
-    if max_seconds is None:
-        max_seconds = config.RECORD_SECONDS_MAX
+def _record_linux(is_held_fn, max_seconds: float) -> bytes:
+    """Linux/Pi path: uses arecord for SPH0645 I2S microphone."""
+    log.info("[MIC] Recording via arecord on %s...", config.ALSA_MIC_DEVICE)
 
-    log.info("[MIC] Recording started via ALSA arecord on %s (32-bit mode)...", config.ALSA_MIC_DEVICE)
-    
-    # Create a temporary file to prevent the 64KB pipe buffer from overflowing
     with tempfile.NamedTemporaryFile(suffix=".raw", delete=False) as f:
         tmp_path = f.name
-        
+
     cmd = [
         "arecord",
         "-D", config.ALSA_MIC_DEVICE,
-        "-f", "S32_LE",                 # Raw 32-bit frames
-        "-r", "48000",                  # Native I2S hardware rate
-        "-c", "1",                      # Mono
-        "-t", "raw",                    
+        "-f", "S32_LE",
+        "-r", "48000",
+        "-c", "1",
+        "-t", "raw",
         "-q",
-        tmp_path                        # Write directly to disk
+        tmp_path,
     ]
 
     process = subprocess.Popen(cmd)
-    
     start_time = time.time()
     while is_held_fn() and (time.time() - start_time) < max_seconds:
         time.sleep(0.05)
-        
+
     process.terminate()
     try:
         process.wait(timeout=1)
     except subprocess.TimeoutExpired:
         process.kill()
-    
-    # Read the audio from the temporary file
+
     with open(tmp_path, "rb") as f:
         raw_bytes = f.read()
-        
     try:
         os.unlink(tmp_path)
     except OSError:
         pass
-    
+
     if not raw_bytes:
+        log.warning("[MIC] No audio captured.")
         return b""
-        
-    # --- The SPH0645 Fix ---
+
+    # SPH0645 fix: 32-bit frames, shift right 16 bits, downsample 48k→16k
     audio_np = np.frombuffer(raw_bytes, dtype=np.int32)
-    # Shift right by 16 bits to drop the empty zero-padding
     audio_16 = (audio_np >> 16).astype(np.int16)
-    # Downsample from 48000 Hz to 16000 Hz for Whisper
     final_bytes = audio_16[::3].tobytes()
-    
+
     duration = len(final_bytes) / 2 / config.SAMPLE_RATE
     log.info("[MIC] Recording stopped – %.1f s.", duration)
-    
     return final_bytes
+
+
+def _record_pyaudio(is_held_fn, max_seconds: float) -> bytes:
+    """Windows/Mac path: uses PyAudio (no ALSA dependency)."""
+    p = pyaudio.PyAudio()
+    stream = p.open(
+        format=pyaudio.paInt16,
+        channels=config.CHANNELS,
+        rate=config.SAMPLE_RATE,
+        input=True,
+        frames_per_buffer=config.CHUNK,
+    )
+    log.info("[MIC] Recording via PyAudio...")
+    frames = []
+    start_time = time.time()
+    max_chunks = int(config.SAMPLE_RATE / config.CHUNK * max_seconds)
+
+    for _ in range(max_chunks):
+        if not is_held_fn():
+            break
+        data = stream.read(config.CHUNK, exception_on_overflow=False)
+        frames.append(data)
+
+    stream.stop_stream()
+    stream.close()
+    p.terminate()
+
+    result = b"".join(frames)
+    duration = len(result) / 2 / config.SAMPLE_RATE
+    log.info("[MIC] Recording stopped – %.1f s.", duration)
+    return result
+
+
+def record_until_release(is_held_fn, max_seconds: float = None) -> bytes:
+    """Capture raw LINEAR16 PCM while is_held_fn() returns True.
+    Uses arecord on Linux (Pi, for SPH0645 I2S mic support),
+    PyAudio on Windows (laptops).
+    """
+    if max_seconds is None:
+        max_seconds = config.RECORD_SECONDS_MAX
+
+    if platform.system() == "Linux":
+        return _record_linux(is_held_fn, max_seconds)
+    else:
+        return _record_pyaudio(is_held_fn, max_seconds)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

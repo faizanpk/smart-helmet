@@ -521,7 +521,7 @@ def _handle_language_config() -> None:
     start_time = time.time()
     hands_free_timer = lambda: (time.time() - start_time) < 2.0
     
-    audio = record_until_release(hands_free_timer, max_seconds=2.0)
+    audio = record_until_release(hands_free_timer, max_seconds=3.0)
 
     if not audio or len(audio) < config.CHUNK * 2.0:
         speak(t("no_input_cancelled"), config.HELMET_LANGUAGE_CODE)
