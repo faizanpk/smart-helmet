@@ -139,7 +139,7 @@ def replay_last_reminder() -> None:
     with _last_triggered_lock:
         last = dict(_last_triggered) if _last_triggered else None
     if last is None:
-        speak(t("no_reminder_to_replay"), config.HELMET_LANGUAGE_CODE)
+        speak(t("no_reminder"), config.HELMET_LANGUAGE_CODE)
         return
     speak(t("reminder_label"), config.HELMET_LANGUAGE_CODE)
     audio = text_to_speech(last["message"], language_code=config.HELMET_LANGUAGE_CODE)
