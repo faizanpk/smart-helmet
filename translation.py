@@ -141,7 +141,7 @@ _PROMPTS = {
     "reminder_saved":        {"en": "Reminder saved for {time}.",
                               "de": "Erinnerung gespeichert für {time}."},
     "reminder_label":        {"en": "Reminder:", "de": "Erinnerung:"},
-    "no_reminder":           {"en": "No Reminder:", "de": " Keine Erinnerung:"},
+    "no_reminder":           {"en": "No reminder", "de": "Keine Erinnerung"},
     
 }
 
