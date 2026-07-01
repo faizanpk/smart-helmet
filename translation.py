@@ -377,7 +377,7 @@ def voice_to_text(audio_bytes: bytes, language_code: str = None) -> str:
     if not audio_bytes or len(audio_bytes) < config.CHUNK * 2:
         return ""
     
-    audio_bytes = _denoise_pcm(audio_bytes)
+    #audio_bytes = _denoise_pcm(audio_bytes)
 
     whisper_lang = None
     if language_code:
