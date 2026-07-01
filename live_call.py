@@ -1,11 +1,16 @@
 # live_call.py – Full-duplex live audio call (intercom mode).
 
+import os
 import socket
 import struct
 import threading
 import queue
 import logging
 import speaker_mode
+import platform
+import tempfile
+import subprocess
+import random
 
 import pyaudio
 
@@ -77,26 +82,65 @@ class LiveCall:
         return self._active
 
     def _sender_thread(self) -> None:
-        stream = None
         sock = None
+        stream = None
+        
+        # RTP Standard Variables
+        ssrc = random.randint(0, 0xFFFFFFFF)  # Unique source identifier
+        timestamp = 0
+        
         try:
-            stream = self._pa.open(
-                format=pyaudio.paInt16, channels=config.CHANNELS,
-                rate=config.SAMPLE_RATE, input=True,
-                frames_per_buffer=_FRAMES_PER_PACKET,
-            )
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             log.info("[CALL-SEND] Active -> %s:%d", self._partner_ip, self._send_port)
 
-            while self._active:
-                pcm = stream.read(_FRAMES_PER_PACKET, exception_on_overflow=False)
-                if self._muted:
-                    pcm = b"\x00" * _PACKET_BYTES
-                header = struct.pack(">I", self._seq)
-                sock.sendto(header + pcm, (self._partner_ip, self._send_port))
-                self._seq = (self._seq + 1) % 0xFFFFFFFF
+            if platform.system() == "Linux":
+                # --- RASPBERRY PI I2S MIC FIX ---
+                cmd = [
+                    "arecord", "-D", config.ALSA_MIC_DEVICE, "-f", "S32_LE",
+                    "-r", "48000", "-c", "1", "-t", "raw", "-q"
+                ]
+                process = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+                
+                while self._active:
+                    raw_data = process.stdout.read(_FRAMES_PER_PACKET * 12) 
+                    import numpy as np
+                    audio_np = np.frombuffer(raw_data, dtype=np.int32)
+                    audio_16 = (audio_np >> 16).astype(np.int16)
+                    pcm = audio_16[::3].tobytes()
+                    
+                    if self._muted:
+                        pcm = b"\x00" * _PACKET_BYTES
+                        
+                    # Build standard 12-byte RTP Header
+                    # V=2, P=0, X=0, CC=0 (0x80) | M=0, PT=10 for L16 Audio (0x0A)
+                    rtp_header = struct.pack(">BBHII", 0x80, 0x0A, self._seq & 0xFFFF, timestamp, ssrc)
+                    sock.sendto(rtp_header + pcm, (self._partner_ip, self._send_port))
+                    
+                    self._seq = (self._seq + 1) & 0xFFFF
+                    timestamp = (timestamp + _FRAMES_PER_PACKET) & 0xFFFFFFFF
+                    
+            else:
+                # --- WINDOWS/MAC (PyAudio) ---
+                stream = self._pa.open(
+                    format=pyaudio.paInt16, channels=config.CHANNELS,
+                    rate=config.SAMPLE_RATE, input=True,
+                    frames_per_buffer=_FRAMES_PER_PACKET,
+                )
+
+                while self._active:
+                    pcm = stream.read(_FRAMES_PER_PACKET, exception_on_overflow=False)
+                    if self._muted:
+                        pcm = b"\x00" * _PACKET_BYTES
+                        
+                    # Build standard 12-byte RTP Header
+                    rtp_header = struct.pack(">BBHII", 0x80, 0x0A, self._seq & 0xFFFF, timestamp, ssrc)
+                    sock.sendto(rtp_header + pcm, (self._partner_ip, self._send_port))
+                    
+                    self._seq = (self._seq + 1) & 0xFFFF
+                    timestamp = (timestamp + _FRAMES_PER_PACKET) & 0xFFFFFFFF
+                    
         except Exception:
-            log.exception("[CALL-SEND] Crashed.")
+            log.exception("[CALL-SEND] RTP crashed.")
         finally:
             if stream:
                 try: stream.stop_stream(); stream.close()
@@ -107,29 +151,62 @@ class LiveCall:
 
     def _receiver_thread(self) -> None:
         sock = None
+        jitter_buffer = {}  # Dictionary to hold out-of-order packets
+        next_play_seq = -1  
+        
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(("0.0.0.0", self._recv_port))
             sock.settimeout(0.2)
-            log.info("[CALL-RECV] Listening on %d", self._recv_port)
+            log.info("[CALL-RECV] RTP Listener on %d", self._recv_port)
 
             while self._active:
                 try:
-                    data, _ = sock.recvfrom(4 + _PACKET_BYTES + 64)
+                    data, _ = sock.recvfrom(12 + _PACKET_BYTES + 64)
                 except socket.timeout:
                     continue
-                if len(data) < 4 + _PACKET_BYTES:
+                    
+                if len(data) < 12 + _PACKET_BYTES:
                     continue
-                pcm = data[4:]
+                    
+                # Parse the 12-byte RTP Header
+                rtp_header = data[:12]
+                b1, b2, seq, timestamp, ssrc = struct.unpack(">BBHII", rtp_header)
+                pcm = data[12:]
+                
+                # --- JITTER BUFFER LOGIC ---
+                if next_play_seq == -1:
+                    next_play_seq = seq  # Lock onto the very first sequence number
+                    
+                jitter_buffer[seq] = pcm
+                
+                # Play the packet if it's the exact one we are expecting next
+                if next_play_seq in jitter_buffer:
+                    play_pcm = jitter_buffer.pop(next_play_seq)
+                    next_play_seq = (next_play_seq + 1) & 0xFFFF
+                # Or skip ahead if a packet was permanently lost over Wi-Fi
+                elif any(s >= next_play_seq + 3 for s in jitter_buffer.keys()):
+                    next_play_seq = max(jitter_buffer.keys())
+                    play_pcm = jitter_buffer.pop(next_play_seq)
+                    next_play_seq = (next_play_seq + 1) & 0xFFFF
+                else:
+                    continue # Wait for the correct packet to arrive
+                        
+                # Send the correctly ordered packet to the speaker
                 try:
-                    self._recv_queue.put_nowait(pcm)
+                    self._recv_queue.put_nowait(play_pcm)
                 except queue.Full:
                     try: self._recv_queue.get_nowait()
                     except queue.Empty: pass
-                    self._recv_queue.put_nowait(pcm)
+                    self._recv_queue.put_nowait(play_pcm)
+                        
+                # Prevent memory leaks if sequence numbers jump wildly
+                if len(jitter_buffer) > 10:
+                    jitter_buffer.clear()
+
         except Exception:
-            log.exception("[CALL-RECV] Crashed.")
+            log.exception("[CALL-RECV] RTP crashed.")
         finally:
             if sock:
                 sock.close()
