@@ -1,16 +1,27 @@
-# Smart Helmet – Python dependencies
+# Smart Helmet – Python Dependencies
 # pip install -r requirements.txt
 
-faster-whisper
-deep-translator
-ctranslate2
-piper-tts
-pyaudio
-schedule
-dateparser
-noisereduce
-numpy
-keyboard
-RPi.GPIO>=0.7.1; sys_platform == "linux"
+# --- Core AI Modules ---
+faster-whisper      # Offline Speech-to-Text (STT)
+ctranslate2         # Backend engine for faster-whisper
+piper-tts           # Offline Text-to-Speech (TTS)
+deep-translator     # Cloud API for translation
+
+# --- Audio & Signal Processing ---
+pyaudio             # Audio I/O interface (Windows/Mac fallback)
+numpy               # Matrix manipulation (downsampling bug-fix)
+scipy               # Required backend for noisereduce
+noisereduce         # Audio denoiser for transcription clarity
+
+# --- Hardware & Interface ---
+keyboard            # Laptop keyboard simulation (Manager)
+RPi.GPIO>=0.7.1; sys_platform == "linux"  # Pi GPIO hardware control
+
+# --- Utilities ---
+schedule            # Task scheduling
+dateparser          # Human-readable date parsing
+
+# --- Voice Model Downloads ---
+# Run these commands manually to download the offline voices:
 # python -m piper.download_voices en_US-lessac-medium
 # python -m piper.download_voices de_DE-thorsten-medium

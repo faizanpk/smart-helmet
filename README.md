@@ -1,209 +1,92 @@
-# Smart Helmet – Communication Module
+# Smart Helmet – Industrial Coordination System
 
-A voice-driven communication system for construction site workers built on **Raspberry Pi 4** and a **Windows laptop**, with no screens or dashboards — everything is audio only.
-
-## Features
-
-| Feature | Description |
-|---------|-------------|
-| **Push-to-Talk Translation** | Hold button → speak → partner hears translated audio (EN ↔ DE, offline) |
-| **Task Reminders** | Speak a reminder with a time ("at 14:30") → plays automatically at that time |
-| **Shift Handover** | Record a message for the next shift; incoming shift plays it on arrival |
-| **Live Call** | Full-duplex audio intercom (no translation, real-time, ~150 ms latency) |
-| **Speaker Mode** | Toggle switch raises volume when the helmet is removed |
-
-All AI processing is **fully offline** — no internet or cloud APIs required after initial model download.
+A lightweight communication system for managers and workers on industrial and construction sites. Each worker wears a Raspberry Pi-powered helmet equipped with an I2S microphone and speaker. They can configure language, send asynchronous voice messages, trigger emergency broadcasts, setup task reminders via voice, record handover notes, and establish live VoIP calls — all routed through a Manager (site supervisor) over local Wi-Fi. Incoming voice messages are automatically transcribed using offline Speech-to-Text (faster-whisper), translated via Google Translate, and played back using offline Text-to-Speech (piper-tts). The system is designed to run on a Raspberry Pi 4 at the edge with minimal cloud dependency, enabling basic coordination even in subterranean or remote environments
 
 ---
 
-## Hardware (Worker Helmet)
+## Installation
 
-| Component | Purpose |
-|-----------|---------|
-| Raspberry Pi 4 (2 GB) | Main controller |
-| Adafruit SPH0645LM4H | I2S MEMS microphone |
-| Adafruit MAX98357A | I2S Class-D amplifier |
-| Mini oval speaker (8 Ω, 1 W) | Audio output |
-| 3× Push buttons | Speak / Reminder / Handover |
-| 3-pin toggle switch (ON-OFF-ON) | Speaker mode + Live Call |
-| Li-Ion 3.7 V 5000 mAh + TP4056 + MT3608 | Battery + charging + 5 V boost |
-
-**Manager side:** Windows laptop (keyboard simulates buttons).
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Speech-to-Text | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (Whisper tiny / base) |
-| Translation | [ctranslate2](https://github.com/OpenNMT/CTranslate2) + Helsinki-NLP OPUS-MT models |
-| Text-to-Speech | pyttsx3 (Windows SAPI / Pi espeak-ng) |
-| Audio I/O | PyAudio / ALSA (Linux) |
-| Networking | TCP (translation messages) + UDP (live call audio) |
-| Storage | SQLite via Python `sqlite3` |
-| GPIO | RPi.GPIO (Pi) / `keyboard` library (laptop simulation) |
-
----
-
-## Project Structure
-
-```
-smart-helmet/
-├── main.py            # Entry point – start with: python main.py manager / worker
-├── config.py          # All configuration (role, IP, language, GPIO pins)
-├── translation.py     # STT + translation + TTS pipeline (fully offline)
-├── network.py         # TCP manager/worker communication
-├── live_call.py       # Full-duplex UDP audio streaming (live call mode)
-├── gpio_handler.py    # GPIO buttons on Pi / keyboard fallback on laptop
-├── speaker_mode.py    # Toggle switch: volume + live call trigger
-├── reminders.py       # Timed voice reminders
-├── handover.py        # Shift handover record/playback
-├── db.py              # SQLite database init and helpers
-├── test_suite.py      # Interactive test runner (11 tests)
-├── setup_pi.sh        # One-time Pi setup script (run with sudo)
-├── requirements.txt   # Python dependencies
-└── data/              # Runtime data (DB, model cache) – git-ignored
-```
-
----
-
-## Setup
-
-### Prerequisites
-
-- Python 3.10+ on Windows (manager laptop)
-- Raspberry Pi OS Lite 64-bit (worker Pi)
-- Both devices on the same Wi-Fi network
-
-### 1. Clone the repo
+Requires Python 3.10+. Install all dependencies:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/smart-helmet.git
-cd smart-helmet
+pip install -r requirements.txt
 ```
 
-### 2. Manager laptop (Windows)
-
-```powershell
-# Install Python packages
-python -m pip install -r requirements.txt
-
-# Download offline AI models (~300 MB, one-time, needs internet)
-python -c "from translation import setup_offline_models; setup_offline_models()"
-python -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cpu', compute_type='int8')"
-```
-
-Edit `config.py`:
-```python
-HELMET_ROLE           = "manager"
-HELMET_LANGUAGE_CODE  = "en-US"
-TARGET_LANGUAGE_CODE  = "de-DE"
-HELMET_LANGUAGE_SHORT = "en"
-TARGET_LANGUAGE_SHORT = "de"
-WHISPER_MODEL_SIZE    = "base"
-```
-
-### 3. Worker Raspberry Pi
+Then download the offline voice models for TTS:
 
 ```bash
-# Copy repo to Pi (from laptop)
-scp -r smart-helmet/ pi@smart-helmet.local:/home/pi/
-
-# On the Pi
-cd /home/pi/smart-helmet
-chmod +x setup_pi.sh
-sudo ./setup_pi.sh   # installs packages, I2S overlays, AI models, systemd service
+python -m piper.download_voices en_US-lessac-medium
+python -m piper.download_voices de_DE-thorsten-medium
 ```
-
-Edit `config.py` on the Pi:
-```python
-HELMET_ROLE           = "worker"
-HELMET_LANGUAGE_CODE  = "de-DE"
-TARGET_LANGUAGE_CODE  = "en-US"
-HELMET_LANGUAGE_SHORT = "de"
-TARGET_LANGUAGE_SHORT = "en"
-PARTNER_IP            = "192.168.x.x"   # <- your laptop's IP
-WHISPER_MODEL_SIZE    = "tiny"
-```
-
-Reboot: `sudo reboot`
 
 ---
 
-## Running
+## How to Run
 
-**Manager (PowerShell as Administrator):**
-```powershell
+Each device runs the same `main.py` script with a role argument:
+
+```bash
+# On the Manager laptop (site supervisor):
 python main.py manager
-```
 
-**Worker (Pi):**
-```bash
-sudo systemctl start smart-helmet
-# or manually:
+# On a Worker helmet (Raspberry Pi or laptop):
 python main.py worker
 ```
 
-Both sides announce **"Smart helmet ready."** when connected.
+---
+
+## Configuration (`config.py`)
+
+Before running, edit `config.py` to match your network setup and hardware:
+
+| Setting | Description | Example |
+| :--- | :--- | :--- |
+| `HELMET_ROLE` | Role of this device | `"manager"` or `"worker"` |
+| `HELMET_ID` | Unique ID for this device | `"w-01"`, `"w-02"` |
+| `MANAGER_IP` | LAN IP address of the Manager laptop | `"192.168.43.210"` |
+| `WORKER_IPS` | LAN IP addresses of each worker | `{w-01: "192.168.43.138",}` |
+| `HELMET_LANGUAGE` | Language this user speaks | `"en"` or `"de"` |
+| `WHISPER_MODEL_SIZE` | STT model size | `"tiny"` (Pi) or `"base"` (laptop) |
+| `ALSA_MIC_DEVICE` | ALSA device for I2S mic (Linux only) | `"plughw:2,0"` |
+| `ALSA_SPK_DEVICE` | ALSA device for I2S amplifier (Linux only) | `"plughw:2,1"` |
 
 ---
 
-## Controls
+## Hardware List (Raspberry Pi Helmet)
 
-### Manager Laptop (keyboard)
+| Component | Model | Purpose |
+| :--- | :--- | :--- |
+| Single Board Computer | Raspberry Pi 4 (4 GB RAM) | Main compute & networking |
+| I2S Microphone | SPH0645 | Voice capture |
+| I2S Amplifier | MAX98357A | Audio playback |
+| Speaker | 4Ω / 3W Mini Speaker | Voice output |
+| Push Buttons | 6× Tactile Push Buttons | Controls (PTT, Play, Call, Reminder, etc.) |
+| Power Button | 1× Momentary Push Button | GPIO 3 safe power ON/OFF |
+| LED | 1× Standard LED + 330Ω resistor | Unread message indicator |
+| Power Supply | 5V / 3A USB-C | Raspberry Pi power |
 
-| Key | Normal mode | During live call |
-|-----|------------|-----------------|
-| Hold `SPACE` | Push-to-talk + translate | Mute |
-| Hold `R` | Record reminder | — |
-| `H` | Play / record handover | — |
-| `L` | Start live call | Stop live call |
-
-### Worker Pi (physical buttons)
-
-| Button | GPIO | Function |
-|--------|------|---------|
-| BTN_SPEAK | GPIO 17 | Push-to-talk / Mute during call |
-| BTN_REMINDER | GPIO 27 | Record reminder |
-| BTN_HANDOVER | GPIO 22 | Play or record handover |
-| Toggle ON | GPIO 23 | Live call + loud speaker |
-| Toggle OFF | GPIO 23 | PTT mode + normal volume |
-
----
-
-## Testing
-
-Run individual tests or the full suite:
-
-```bash
-python test_suite.py        # all 11 tests in order
-python test_suite.py 1      # imports only
-python test_suite.py 4      # translation only
-python test_suite.py 11     # live call UDP loopback
-```
+### GPIO Pinout
+| Function | GPIO | Physical Pin |
+| :--- | :--- | :--- |
+| Power ON / Shutdown | GPIO 3 | Pin 5 |
+| Speak to Manager | GPIO 17 | Pin 11 |
+| Speak to Peer Worker | GPIO 24 | Pin 18 |
+| Call Manager | GPIO 23 | Pin 16 |
+| Play Message | GPIO 25 | Pin 22 |
+| Handover / Emergency | GPIO 22 | Pin 15 |
+| Reminder | GPIO 27 | Pin 13 |
+| Message Alert LED | GPIO 5 | Pin 29 |
 
 ---
 
-## Hardware Wiring Summary
+## Known Limitations
 
-| Component | Pi Pin | GPIO |
-|-----------|--------|------|
-| SPH0645LM4H BCLK | Pin 12 | GPIO 18 |
-| SPH0645LM4H DOUT | Pin 38 | GPIO 20 |
-| SPH0645LM4H LRCL | Pin 35 | GPIO 19 |
-| MAX98357A BCLK | Pin 12 | GPIO 18 |
-| MAX98357A LRC | Pin 35 | GPIO 19 |
-| MAX98357A DIN | Pin 40 | GPIO 21 |
-| BTN_SPEAK | Pin 11 | GPIO 17 |
-| BTN_REMINDER | Pin 13 | GPIO 27 |
-| BTN_HANDOVER | Pin 15 | GPIO 22 |
-| Toggle switch | Pin 16 | GPIO 23 |
+1. **Translation requires internet.** Speech-to-Text and Text-to-Speech run fully offline on the edge. However, the translation step (`deep-translator`) calls the Google Translate Cloud API and requires a working internet connection. A future improvement is replacing this with a locally hosted model (e.g., Argos Translate).
 
-See `USERGUIDE.md` for full wiring diagrams and step-by-step instructions.
+2. **Whisper latency on Raspberry Pi.** Running the `tiny` STT model on a Pi 4 CPU typically takes 1.5 – 2.5 seconds per message. This is acceptable for asynchronous messaging but is not suitable for real-time command processing. Using a Pi 5 or enabling a Coral USB Accelerator would significantly reduce this latency.
 
----
+3. **Static IP configuration.** Worker and Manager IP addresses must be manually set in `config.py` before deployment. Automatic device discovery is not yet implemented.
 
-## License
+4. **Live calls are Manager ↔ Worker only.** Workers cannot initiate live VoIP audio streams directly with each other. Peer communication is limited to asynchronous text/voice messages over TCP.
 
-MIT License – see [LICENSE](LICENSE) for details.
+5. **Windows Firewall.** When testing on Windows laptops, incoming UDP packets (ports 5006–5009) for live calls may be blocked by Windows Defender Firewall. Ensure `python.exe` is allowed through the firewall for both Private and Public networks.

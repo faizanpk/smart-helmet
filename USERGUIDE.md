@@ -159,7 +159,10 @@ GPIO pin  ────────┤ Button ├──────── GND
 | **Play Message** (press or hold) | GPIO 25 | Pin 22 | Pin 25 |
 | **Reminder** (hold to record) | GPIO 27 | Pin 13 | Pin 14 |
 | **Handover** (press) | GPIO 22 | Pin 15 | Pin 14 |
+|**Power ON / Safe Shutdown** | Pin 5  | GPIO 3 |
 | **Loudspeaker Mode** (toggle switch) | GPIO 26 | Pin 37 | Pin 39 |
+
+
 
 > **Tip:** Run one jumper wire from any GND pin (e.g. Pin 14) to a breadboard ground rail. Then connect all the button GND legs to that shared rail — saves wiring.
 
@@ -217,7 +220,8 @@ Pi USB-C port (power input)
 │                                                                        │
 │  Pin  1 (3.3V) ──────────────────────────── SPH0645 VDD              │
 │  Pin  2 (5V)   ──────────────────────────── MAX98357A Vin            │
-│  Pin  6 (GND)  ──────────────────────────── SPH0645 GND              │
+│  Pin  5 (GPIO3) ────[BTN: Pi On/Off]──────  GND rail
+   Pin  6 (GND)  ──────────────────────────── SPH0645 GND              │
 │  Pin  9 (GND)  ──────────────────────────── MAX98357A GND            │
 │  Pin 11 (GPIO17) ──[BTN: Send to Manager]── GND rail                 │
 │  Pin 12 (GPIO18) ──────────────────────────┬ SPH0645 BCLK            │
@@ -247,7 +251,7 @@ Pi USB-C port (power input)
 ---
 
 ## 6. Software Setup
-
+ 
 ### 6.1 One-time Pi setup (run once, needs internet)
 
 ```bash
