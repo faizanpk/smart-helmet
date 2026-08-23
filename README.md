@@ -43,8 +43,8 @@ Before running, edit `config.py` to match your network setup and hardware:
 | :--- | :--- | :--- |
 | `HELMET_ROLE` | Role of this device | `"manager"` or `"worker"` |
 | `HELMET_ID` | Unique ID for this device | `"w-01"`, `"w-02"` |
-| `MANAGER_IP` | LAN IP address of the Manager laptop | `"192.168.43.210"` |
-| `WORKER_IPS` | LAN IP addresses of each worker | `{w-01: "192.168.43.138",}` |
+| `MANAGER_IP` | LAN IP address of the Manager laptop | `""` |
+| `WORKER_IPS` | LAN IP addresses of each worker | `{w-01: "",}` |
 | `HELMET_LANGUAGE` | Language this user speaks | `"en"` or `"de"` |
 | `WHISPER_MODEL_SIZE` | STT model size | `"tiny"` (Pi) or `"base"` (laptop) |
 | `ALSA_MIC_DEVICE` | ALSA device for I2S mic (Linux only) | `"plughw:2,0"` |
