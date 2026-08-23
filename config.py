@@ -53,23 +53,23 @@ PIPER_VOICE_EN = os.path.join(PIPER_VOICES_DIR, "en_US-lessac-medium.onnx")
 PIPER_VOICE_DE = os.path.join(PIPER_VOICES_DIR, "de_DE-thorsten-medium.onnx")
 
 # ─── Network – Manager ────────────────────────────────────────────────────────
-MANAGER_IP = "192.168.43.210"      # ← Laptop 1 (manager) LAN IP
-COMM_PORT  = 5005                 # TCP port: worker ↔ manager
+MANAGER_IP = ""      # ← Laptop 1 (manager) LAN IP
+COMM_PORT  =                  # TCP port: worker ↔ manager
 
 # Legacy alias kept for live_call.py
 PARTNER_IP = MANAGER_IP
 
 # ─── Network – Workers (manager needs each worker's IP to call/message them) ──
 WORKER_IPS = {
-    "w-01": "192.168.43.138",      # Raspberry Pi worker
-    "w-02": "192.168.43.145",      # Laptop worker
+    "w-01": "",      # Raspberry Pi worker
+    "w-02": "",      # Laptop worker
 }
-PEER_PORT      = 5007             # TCP port: worker ↔ worker
+PEER_PORT      =           # TCP port: worker ↔ worker
 
 _FIXED_WORKER_ORDER = ["w-01", "w-02"]
 
 # ─── Live Call ────────────────────────────────────────────────────────────────
-LIVE_CALL_PORT = 5006             # UDP port for full-duplex intercom
+LIVE_CALL_PORT =             # UDP port for full-duplex intercom
 
 # ─── GPIO Pin Numbers (BCM numbering, Raspberry Pi) ─────────────────────────────────────
 BTN_SPEAK_MANAGER = 17   # Hold → PTT to manager           (Pin 11)
